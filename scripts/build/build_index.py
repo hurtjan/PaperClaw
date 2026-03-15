@@ -11,7 +11,11 @@ from datetime import date
 from pathlib import Path
 from collections import defaultdict
 
+import sys
 ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+from litdb import export_json
+
 EXTRACTIONS_DIR = ROOT / "data" / "extractions"
 EXTERNAL_DIR = ROOT / "data" / "db_imports"
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
@@ -82,8 +86,10 @@ def main():
         "citation_counts": citation_counts,
     }
 
-    INDEX_FILE.write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n")
     total_contexts = sum(len(v) for v in by_cited.values())
+    export_json(index, INDEX_FILE,
+                description=f"build contexts.json: {len(owned_papers)} owned, {total_contexts} contexts")
+
     print(f"Contexts: {len(owned_papers)} owned, {total_contexts} contexts, {len(by_purpose)} purpose types")
 
 

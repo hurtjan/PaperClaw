@@ -31,6 +31,14 @@ CITATION QUERIES
   top-cited [N]                Top N most-cited papers
   common-citers <id1> <id2>    Papers that cite both id1 and id2
   purpose <tag> [--limit N]    All contexts with this purpose tag
+  co-cited <id> [id2 ...] [--min N] [--limit N]
+                               Co-citation: references frequently co-cited with given paper(s)
+  bib-coupling <id> [id2 ...] [--min N] [--limit N]
+                               Bibliographic coupling: papers with most overlapping bibliographies
+  shared-refs <id1> <id2> [id3 ...]
+                               List cited references shared between papers
+  shared-papers <author1> <author2> [author3 ...]
+                               Papers co-authored by all given authors
 
 FULL-TEXT SEARCH (BM25-ranked)
   search <phrase> [--limit N] [--filter-purpose TAG] [--filter-year-min Y]
@@ -75,6 +83,11 @@ TABLES
       One row per citation context. purpose is one of: background, motivation,
       methodology, data_source, supporting_evidence, contrasting_evidence,
       comparison, extension, tool_software.
+
+  citation_edges (citing_id, cited_id)
+      Complete citation graph from cites arrays. Covers all edges, not just those
+      with extracted contexts (~2x coverage). Used by chain, common-citers,
+      pagerank, katz, co-cited, bib-coupling, shared-refs.
 
   citation_counts (paper_id PK, cited_by_count INT)
 
@@ -193,6 +206,18 @@ def build_db(con):
           r["journal"], r["doi"], r["abstract"], r["pdf_file"], r["text_file"])
          for r in paper_rows]
     )
+
+    # -- Citation edges (complete graph from cites arrays) --
+    con.execute("DROP TABLE IF EXISTS citation_edges")
+    con.execute("CREATE TABLE citation_edges (citing_id VARCHAR, cited_id VARCHAR)")
+    cites_data = [(pid, p.get("cites", [])) for pid, p in papers_data.items() if p.get("cites")]
+    if cites_data:
+        con.execute("CREATE TEMP TABLE _cites_tmp (citing_id VARCHAR, cited_ids VARCHAR[])")
+        con.executemany("INSERT INTO _cites_tmp VALUES (?,?)", cites_data)
+        con.execute("INSERT INTO citation_edges SELECT citing_id, UNNEST(cited_ids) FROM _cites_tmp")
+        con.execute("DROP TABLE _cites_tmp")
+    con.execute("CREATE INDEX idx_ce_citing ON citation_edges(citing_id)")
+    con.execute("CREATE INDEX idx_ce_cited ON citation_edges(cited_id)")
 
     # -- Citation contexts from contexts.json --
     index_data = json.loads(INDEX_FILE.read_text())
@@ -799,10 +824,10 @@ def cmd_chain(args, con):
     rows = con.execute(f"""
         WITH RECURSIVE chain AS (
             SELECT cited_id, citing_id, 1 as depth
-            FROM contexts WHERE cited_id = ?
+            FROM citation_edges WHERE cited_id = ?
             UNION
             SELECT c.cited_id, c.citing_id, ch.depth + 1
-            FROM contexts c
+            FROM citation_edges c
             JOIN chain ch ON c.cited_id = ch.citing_id
             WHERE ch.depth < ?
         )
@@ -828,8 +853,8 @@ def cmd_common_citers(args, con):
     pid2 = resolve_paper_id(con, args.id2)
     rows = con.execute("""
         SELECT DISTINCT c1.citing_id, p.title, p.authors, p.year
-        FROM contexts c1
-        JOIN contexts c2 ON c1.citing_id = c2.citing_id
+        FROM citation_edges c1
+        JOIN citation_edges c2 ON c1.citing_id = c2.citing_id
         JOIN papers p ON c1.citing_id = p.paper_id
         WHERE c1.cited_id = ? AND c2.cited_id = ?
         ORDER BY p.year DESC
@@ -838,6 +863,133 @@ def cmd_common_citers(args, con):
     for citing, title, authors, year in rows:
         print(f"  {fmt_authors(authors)} ({year}) — {(title or '')[:70]}")
         print(f"    [{citing}]")
+
+
+def cmd_co_cited(args, con):
+    ids = [resolve_paper_id(con, i) for i in args.ids]
+    min_count = args.min
+    limit = args.limit
+    placeholders = ",".join("?" * len(ids))
+    if len(ids) == 1:
+        rows = con.execute(f"""
+            SELECT e2.cited_id, COUNT(DISTINCT e1.citing_id) AS co_cite_count,
+                   p.title, p.authors, p.year
+            FROM citation_edges e1
+            JOIN citation_edges e2 ON e1.citing_id = e2.citing_id AND e1.cited_id != e2.cited_id
+            JOIN papers p ON e2.cited_id = p.paper_id
+            WHERE e1.cited_id IN ({placeholders})
+              AND e2.cited_id NOT IN ({placeholders})
+            GROUP BY e2.cited_id, p.title, p.authors, p.year
+            HAVING co_cite_count >= ?
+            ORDER BY co_cite_count DESC
+            LIMIT ?
+        """, ids + ids + [min_count, limit]).fetchall()
+    else:
+        rows = con.execute(f"""
+            SELECT e2.cited_id, COUNT(DISTINCT e1.citing_id) AS co_cite_count,
+                   p.title, p.authors, p.year
+            FROM citation_edges e1
+            JOIN citation_edges e2 ON e1.citing_id = e2.citing_id AND e1.cited_id != e2.cited_id
+            JOIN papers p ON e2.cited_id = p.paper_id
+            WHERE e1.cited_id IN ({placeholders})
+              AND e2.cited_id NOT IN ({placeholders})
+            GROUP BY e2.cited_id, p.title, p.authors, p.year
+            HAVING COUNT(DISTINCT e1.cited_id) = ? AND co_cite_count >= ?
+            ORDER BY co_cite_count DESC
+            LIMIT ?
+        """, ids + ids + [len(ids), min_count, limit]).fetchall()
+    seed_str = ", ".join(ids)
+    print(f"Co-citation for [{seed_str}] (min={min_count}): {len(rows)} result(s)\n")
+    for cited, count, title, authors, year in rows:
+        print(f"  [{count}x] {fmt_authors(authors)} ({year}) — {(title or '')[:65]}")
+        print(f"    [{cited}]")
+
+
+def cmd_bib_coupling(args, con):
+    ids = [resolve_paper_id(con, i) for i in args.ids]
+    min_count = args.min
+    limit = args.limit
+    placeholders = ",".join("?" * len(ids))
+    if len(ids) == 1:
+        rows = con.execute(f"""
+            SELECT e2.citing_id, COUNT(DISTINCT e1.cited_id) AS shared_refs,
+                   p.title, p.authors, p.year, p.type
+            FROM citation_edges e1
+            JOIN citation_edges e2 ON e1.cited_id = e2.cited_id AND e1.citing_id != e2.citing_id
+            JOIN papers p ON e2.citing_id = p.paper_id
+            WHERE e1.citing_id IN ({placeholders})
+              AND e2.citing_id NOT IN ({placeholders})
+            GROUP BY e2.citing_id, p.title, p.authors, p.year, p.type
+            HAVING shared_refs >= ?
+            ORDER BY shared_refs DESC
+            LIMIT ?
+        """, ids + ids + [min_count, limit]).fetchall()
+    else:
+        rows = con.execute(f"""
+            SELECT e2.citing_id, COUNT(DISTINCT e1.cited_id) AS shared_refs,
+                   p.title, p.authors, p.year, p.type
+            FROM citation_edges e1
+            JOIN citation_edges e2 ON e1.cited_id = e2.cited_id AND e1.citing_id != e2.citing_id
+            JOIN papers p ON e2.citing_id = p.paper_id
+            WHERE e1.citing_id IN ({placeholders})
+              AND e2.citing_id NOT IN ({placeholders})
+            GROUP BY e2.citing_id, p.title, p.authors, p.year, p.type
+            HAVING COUNT(DISTINCT e1.citing_id) = ? AND shared_refs >= ?
+            ORDER BY shared_refs DESC
+            LIMIT ?
+        """, ids + ids + [len(ids), min_count, limit]).fetchall()
+    seed_str = ", ".join(ids)
+    print(f"Bibliographic coupling for [{seed_str}] (min={min_count}): {len(rows)} result(s)\n")
+    for coupled, shared, title, authors, year, ptype in rows:
+        tag = " (owned)" if ptype in ("owned", "external_owned") else ""
+        print(f"  [{shared} shared] {fmt_authors(authors)} ({year}) — {(title or '')[:60]}{tag}")
+        print(f"    [{coupled}]")
+
+
+def cmd_shared_refs(args, con):
+    if len(args.ids) < 2:
+        print("ERROR: shared-refs requires at least 2 paper IDs", file=sys.stderr)
+        sys.exit(1)
+    ids = [resolve_paper_id(con, i) for i in args.ids]
+    n = len(ids)
+    placeholders = ",".join("?" * n)
+    rows = con.execute(f"""
+        SELECT ce.cited_id, p.title, p.authors, p.year
+        FROM citation_edges ce
+        JOIN papers p ON ce.cited_id = p.paper_id
+        WHERE ce.citing_id IN ({placeholders})
+        GROUP BY ce.cited_id, p.title, p.authors, p.year
+        HAVING COUNT(DISTINCT ce.citing_id) = ?
+        ORDER BY p.year DESC
+    """, ids + [n]).fetchall()
+    id_str = " \u2229 ".join(ids)
+    print(f"Shared references ({id_str}): {len(rows)}\n")
+    for cited, title, authors, year in rows:
+        print(f"  {fmt_authors(authors)} ({year}) — {(title or '')[:65]}")
+        print(f"    [{cited}]")
+
+
+def cmd_shared_papers(args, con):
+    if len(args.ids) < 2:
+        print("ERROR: shared-papers requires at least 2 author IDs", file=sys.stderr)
+        sys.exit(1)
+    n = len(args.ids)
+    placeholders = ",".join("?" * n)
+    rows = con.execute(f"""
+        SELECT pa.paper_id, p.title, p.authors, p.year, p.type
+        FROM paper_authors pa
+        JOIN papers p ON pa.paper_id = p.paper_id
+        WHERE pa.author_id IN ({placeholders})
+        GROUP BY pa.paper_id, p.title, p.authors, p.year, p.type
+        HAVING COUNT(DISTINCT pa.author_id) = ?
+        ORDER BY p.year DESC
+    """, args.ids + [n]).fetchall()
+    id_str = " & ".join(args.ids)
+    print(f"Papers co-authored by [{id_str}]: {len(rows)}\n")
+    for pid, title, authors, year, ptype in rows:
+        tag = " (owned)" if ptype in ("owned", "external_owned") else ""
+        print(f"  {fmt_authors(authors)} ({year}) — {(title or '')[:65]}{tag}")
+        print(f"    [{pid}]")
 
 
 def cmd_top_cited(args, con):
@@ -1344,6 +1496,7 @@ def cmd_stats(args, con):
     owned = con.execute("SELECT COUNT(*) FROM papers WHERE type IN ('owned', 'external_owned')").fetchone()[0]
     cited = total - owned
     contexts = con.execute("SELECT COUNT(*) FROM contexts").fetchone()[0]
+    cite_edges = con.execute("SELECT COUNT(*) FROM citation_edges").fetchone()[0]
     claims_n = con.execute("SELECT COUNT(*) FROM claims").fetchone()[0]
     kw_papers = con.execute("SELECT COUNT(DISTINCT paper_id) FROM keywords").fetchone()[0]
     topic_papers = con.execute("SELECT COUNT(DISTINCT paper_id) FROM topics").fetchone()[0]
@@ -1358,7 +1511,8 @@ def cmd_stats(args, con):
 
     print(f"Corpus statistics:\n")
     print(f"  Papers:       {total} total ({owned} owned, {cited} cited-only)")
-    print(f"  Contexts:     {contexts}")
+    print(f"  Contexts:     {contexts} (annotated)")
+    print(f"  Cite edges:   {cite_edges} (full graph)")
     print(f"  Claims:       {claims_n}")
     print(f"  With keywords:    {kw_papers} papers")
     print(f"  With topics:      {topic_papers} papers")
@@ -1487,25 +1641,25 @@ def cmd_sql(args, con):
 
 
 def _build_graph_tables(con, reverse=False, undirected=False):
-    """Build _pr_adj (distinct edges) and _pr_out_deg from contexts. Returns N."""
+    """Build _pr_adj (distinct edges) and _pr_out_deg from citation_edges. Returns N."""
     con.execute("DROP TABLE IF EXISTS _pr_adj")
     con.execute("DROP TABLE IF EXISTS _pr_out_deg")
     if undirected:
         con.execute("""
             CREATE TEMP TABLE _pr_adj AS
-            SELECT DISTINCT citing_id, cited_id FROM contexts
+            SELECT DISTINCT citing_id, cited_id FROM citation_edges
             UNION
-            SELECT DISTINCT cited_id AS citing_id, citing_id AS cited_id FROM contexts
+            SELECT DISTINCT cited_id AS citing_id, citing_id AS cited_id FROM citation_edges
         """)
     elif reverse:
         con.execute("""
             CREATE TEMP TABLE _pr_adj AS
-            SELECT DISTINCT cited_id AS citing_id, citing_id AS cited_id FROM contexts
+            SELECT DISTINCT cited_id AS citing_id, citing_id AS cited_id FROM citation_edges
         """)
     else:
         con.execute("""
             CREATE TEMP TABLE _pr_adj AS
-            SELECT DISTINCT citing_id, cited_id FROM contexts
+            SELECT DISTINCT citing_id, cited_id FROM citation_edges
         """)
     con.execute("""
         CREATE TEMP TABLE _pr_out_deg AS
@@ -1838,6 +1992,22 @@ def main():
     p.add_argument("id1")
     p.add_argument("id2")
 
+    p = sub.add_parser("co-cited", help="Co-citation: references frequently co-cited with given paper(s)")
+    p.add_argument("ids", nargs="+")
+    p.add_argument("--min", type=int, default=2)
+    p.add_argument("--limit", type=int, default=20)
+
+    p = sub.add_parser("bib-coupling", help="Bibliographic coupling: papers sharing citations with given paper(s)")
+    p.add_argument("ids", nargs="+")
+    p.add_argument("--min", type=int, default=2)
+    p.add_argument("--limit", type=int, default=20)
+
+    p = sub.add_parser("shared-refs", help="Shared references between papers")
+    p.add_argument("ids", nargs="+")
+
+    p = sub.add_parser("shared-papers", help="Papers co-authored by given authors")
+    p.add_argument("ids", nargs="+")
+
     p = sub.add_parser("top-cited", help="Top N most-cited papers")
     p.add_argument("n", nargs="?", type=int, default=15)
 
@@ -1940,6 +2110,10 @@ def main():
         "cited-by": cmd_cited_by,
         "chain": cmd_chain,
         "common-citers": cmd_common_citers,
+        "co-cited": cmd_co_cited,
+        "bib-coupling": cmd_bib_coupling,
+        "shared-refs": cmd_shared_refs,
+        "shared-papers": cmd_shared_papers,
         "top-cited": cmd_top_cited,
         "pagerank": cmd_pagerank,
         "katz": cmd_katz,

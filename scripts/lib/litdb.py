@@ -301,12 +301,107 @@ def find_candidates(citation: dict, papers: list[dict], min_score: int = 1) -> l
     return results
 
 
-def export_json(data, path: Path, indent: int = 2):
-    """Write JSON with consistent formatting."""
+_TRACKED_FILES = {"papers.json", "authors.json", "contexts.json"}
+
+
+def _record_patch(path: Path, new_data, source: str, description: str | None) -> None:
+    """Compute forward/reverse JSON patches and append to data/db_history/."""
+    try:
+        import jsonpatch
+    except ImportError:
+        return
+    import datetime
+
+    if not path.exists():
+        return  # no baseline to diff against
+
+    try:
+        old_data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+
+    forward = jsonpatch.make_patch(old_data, new_data)
+    if not forward.patch:
+        return  # no-op
+
+    reverse = jsonpatch.make_patch(new_data, old_data)
+
+    ts = datetime.datetime.now(datetime.timezone.utc)
+    ts_tag = ts.strftime("%Y%m%dT%H%M%S")
+    ts_iso = ts.isoformat(timespec="seconds")
+
+    ops_add = sum(1 for op in forward.patch if op["op"] == "add")
+    ops_replace = sum(1 for op in forward.patch if op["op"] == "replace")
+    ops_remove = sum(1 for op in forward.patch if op["op"] == "remove")
+    n_ops = len(forward.patch)
+
+    if description is None:
+        description = f"{n_ops} ops (+{ops_add} ~{ops_replace} -{ops_remove}) on {path.name}"
+
+    # path layout: <project_root>/data/db/<file> → root is 3 levels up
+    project_root = path.parent.parent.parent
+    rel_target = str(path.relative_to(project_root))
+
+    patches_dir = project_root / "data" / "db_history" / "patches"
+    patches_dir.mkdir(parents=True, exist_ok=True)
+
+    patch_filename = f"{ts_tag}_{source}_{path.name}.json"
+    patch_path = patches_dir / patch_filename
+
+    patch_doc = {
+        "version": 1,
+        "timestamp": ts_iso,
+        "source_script": source,
+        "target_file": rel_target,
+        "description": description,
+        "stats": {
+            "ops_add": ops_add,
+            "ops_replace": ops_replace,
+            "ops_remove": ops_remove,
+            "patch_size_ops": n_ops,
+        },
+        "forward_patch": forward.patch,
+        "reverse_patch": reverse.patch,
+    }
+
+    with open(patch_path, "w") as f:
+        json.dump(patch_doc, f, indent=2, ensure_ascii=False)
+
+    manifest_path = project_root / "data" / "db_history" / "manifest.jsonl"
+    entry = {
+        "timestamp": ts_iso,
+        "source": source,
+        "file": rel_target,
+        "description": description,
+        "patch_file": f"data/db_history/patches/{patch_filename}",
+        "stats": patch_doc["stats"],
+    }
+    with open(manifest_path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def export_json(data, path: Path, indent: int = 2, *,
+                source: str | None = None,
+                description: str | None = None,
+                track: bool | None = None):
+    """Write JSON with consistent formatting, optionally tracking patches."""
+    import sys as _sys
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    if source is None:
+        source = Path(_sys.argv[0]).stem
+
+    should_track = track
+    if should_track is None:
+        should_track = path.parent.name == "db" and path.name in _TRACKED_FILES
+
+    if should_track:
+        _record_patch(path, data, source, description)
+
     with open(path, "w") as f:
-        json.dump(data, f, indent=indent, ensure_ascii=False)
+        json.dump(data, f, indent=indent, ensure_ascii=False, sort_keys=True)
 
 
 # ---------------------------------------------------------------------------

@@ -530,7 +530,8 @@ def main():
         db["metadata"]["owned_count"] = owned_count
         db["metadata"]["stub_count"] = stub_count
 
-        export_json(db, PAPERS_FILE)
+        export_json(db, PAPERS_FILE,
+                    description=f"S2 forward: {total_new} new citations, {total_matched} matched")
         print(f"\nSaved papers.json: {owned_count} owned + {stub_count} stub = "
               f"{owned_count + stub_count} total")
 

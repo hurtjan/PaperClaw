@@ -103,7 +103,8 @@ def main():
     db["metadata"]["owned_count"] = owned_count
     db["metadata"]["stub_count"] = stub_count
 
-    export_json(db, PAPERS_FILE)
+    export_json(db, PAPERS_FILE,
+                description=f"adopted {paper_id} from external_owned to owned")
     print(f"\nPromoted '{paper_id}' → owned")
 
     print(f"\nNext steps:")

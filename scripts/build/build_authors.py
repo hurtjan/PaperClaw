@@ -15,6 +15,9 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+from litdb import export_json
+
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 AUTHORS_FILE = ROOT / "data" / "db" / "authors.json"
 
@@ -157,11 +160,10 @@ def main():
     papers = json.loads(PAPERS_FILE.read_text())["papers"]
     data = build_authors(papers)
 
-    AUTHORS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(AUTHORS_FILE, "w") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
     m = data["metadata"]
+    export_json(data, AUTHORS_FILE,
+                description=f"build authors.json: {m['person_count']} persons, {m['institution_count']} institutions")
+
     print(f"Wrote authors.json: {m['person_count']} persons, {m['institution_count']} institutions")
 
     if args.stats:

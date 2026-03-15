@@ -137,7 +137,8 @@ def main():
         "processed_paper_count": len(processed), "last_updated": str(date.today()),
     }
 
-    export_json(authors_data, AUTHORS_FILE)
+    export_json(authors_data, AUTHORS_FILE,
+                description=f"authors: {created} created, {updated} updated")
     print(f"Updated: {updated}, Created: {created}, Total: {len(persons)} persons, {len(institutions)} institutions")
 
 

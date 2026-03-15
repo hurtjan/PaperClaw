@@ -12,7 +12,7 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-from litdb import score_match, is_owned, normalize_doi
+from litdb import score_match, is_owned, normalize_doi, export_json
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 RESOLVED_FILE = ROOT / "data" / "tmp" / "resolved.json"
@@ -106,8 +106,8 @@ def main():
         "papers": papers_db,
     }
 
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
+    export_json(output, OUTPUT_FILE,
+                description=f"build papers.json: {owned_count} owned + {stub_count} stubs")
 
     print(f"Built papers.json: {owned_count} owned + {stub_count} stub = {len(papers_db)} total")
 

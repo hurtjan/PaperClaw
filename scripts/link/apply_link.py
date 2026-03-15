@@ -167,7 +167,8 @@ def main():
     db["metadata"]["owned_count"] = owned_count
     db["metadata"]["stub_count"] = stub_count
 
-    export_json(db, PAPERS_FILE)
+    export_json(db, PAPERS_FILE,
+                description=f"linked {from_id}: {new_entries} new stubs, {linked} citations")
     print(f"\nUpdated papers.json: {owned_count} owned + {stub_count} stub")
 
     # Rebuild index

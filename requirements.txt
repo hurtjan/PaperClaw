@@ -2,3 +2,4 @@ rapidfuzz
 pymupdf
 duckdb
 pyyaml
+jsonpatch

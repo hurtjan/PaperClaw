@@ -206,8 +206,9 @@ def _merge_contexts(source_contexts_file):
     local_ctx["owned_papers"] = owned_papers
     local_ctx["citation_counts"] = {pid: len(p.get("cited_by", [])) for pid, p in papers.items()}
 
-    CONTEXTS_FILE.write_text(json.dumps(local_ctx, indent=2, ensure_ascii=False) + "\n")
     total_contexts = sum(len(v) for v in local_ctx.get("by_cited", {}).values())
+    export_json(local_ctx, CONTEXTS_FILE,
+                description=f"merge contexts: {merged_count} external contexts added, {total_contexts} total")
     print(f"  Context merge: {merged_count} external contexts added, {total_contexts} total")
 
 
@@ -323,7 +324,8 @@ def main():
     local_db["metadata"]["owned_count"] = owned_count
     local_db["metadata"]["stub_count"] = stub_count
 
-    export_json(local_db, PAPERS_FILE)
+    export_json(local_db, PAPERS_FILE,
+                description=f"merge {name}: {added_owned} added, {updated} updated, {enriched} enriched")
     print(f"\nMerge results:")
     print(f"  Added external_owned: {added_owned}")
     if updated:
