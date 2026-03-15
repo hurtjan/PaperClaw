@@ -1,5 +1,5 @@
 ---
-description: End-to-end pipeline test using fixture PDFs. Backs up DB, runs full ingest+link+query cycle on two test sets, tests DB merge. Leaves test DB in place for inspection; original DB backup kept at data/tmp/_test_backup/. Usage: /test
+description: End-to-end pipeline test using fixture PDFs. Backs up DB, runs full ingest+link+query cycle on discovered test sets, tests DB merge. Leaves test DB in place for inspection; original DB backup kept at data/tmp/_test_backup/. Usage: /test
 ---
 
 You are running the end-to-end test suite for the PaperClaw pipeline.
@@ -7,6 +7,21 @@ You are running the end-to-end test suite for the PaperClaw pipeline.
 Arguments: $ARGUMENTS
 
 No arguments runs the full suite. Future: `phase-a`, `phase-b`, `phase-c` to run individual phases.
+
+## Developer Mode Gate
+
+This skill modifies the live database (backs it up, replaces it with test data, runs destructive operations). It should only be run in developer mode.
+
+**Before doing anything else**, use the AskUserQuestion tool to warn the user:
+
+> "/test will temporarily replace your live database with test data, run the full ingest/link/query pipeline, and test DB merge and rollback operations. Your current DB will be backed up to `data/tmp/_test_backup/` and can be restored afterward. This is a developer operation — proceed?"
+
+Options: "Yes, run tests" and "Cancel".
+
+- If the user selects **Cancel**, stop immediately and inform them no changes were made.
+- If the user selects **Yes**, proceed with the test suite below.
+
+---
 
 ## Rules
 
@@ -19,16 +34,23 @@ No arguments runs the full suite. Future: `phase-a`, `phase-b`, `phase-c` to run
 
 ---
 
-## Test Fixtures
+## Test Fixture Discovery
 
-- `pdf-staging/test_1/`: battiston_2017_climate.pdf, mercure_2018_macroeconomic.pdf, von_dulong_2023_concentration.pdf
-- `pdf-staging/test_2/`: mcglade_2015_geographical.pdf, tong_2019_committed.pdf
+Test fixtures live in subdirectories of `pdf-staging/` matching the pattern `test_*/`. Each subdir contains one or more PDF files to ingest as a batch.
+
+At startup, **discover all test subdirs** by listing `pdf-staging/test_*/` and sorting them alphabetically. Record:
+- `TEST_DIRS`: ordered list of discovered subdirs, sorted alphabetically
+- For each subdir, the list of `.pdf` files it contains and the count
+
+If no `test_*` subdirs are found or they contain no PDFs, abort with an error.
+
+The first subdir is used for Phase A (initial ingest). The second subdir (if present) is used for Phase B (incremental ingest). If only one subdir exists, skip Phase B.
 
 ---
 
 ## SETUP
 
-1. **Verify fixtures exist.** Check that all 5 test PDFs are present in their subdirs. If any are missing, abort and report which files are missing.
+1. **Discover and verify fixtures.** Glob for `pdf-staging/test_*/*.pdf`. Group results by subdir. Report what was found (subdir names and PDF counts). If no test PDFs found, abort.
 
 2. **Back up real DB.** Run:
    ```bash
@@ -37,6 +59,8 @@ No arguments runs the full suite. Future: `phase-a`, `phase-b`, `phase-c` to run
    cp data/db/authors.json data/tmp/_test_backup/ 2>/dev/null || true
    cp data/db/contexts.json data/tmp/_test_backup/ 2>/dev/null || true
    cp data/db/lit.duckdb data/tmp/_test_backup/ 2>/dev/null || true
+   cp data/db_history/manifest.jsonl data/tmp/_test_backup/ 2>/dev/null || true
+   truncate -s 0 data/db_history/manifest.jsonl 2>/dev/null || true
    ```
 
 3. **Record pre-existing files** in `data/pdfs/`, `data/text/`, `data/extractions/` (use `ls` or Glob) so cleanup can distinguish test artifacts from real data.
@@ -50,19 +74,19 @@ No arguments runs the full suite. Future: `phase-a`, `phase-b`, `phase-c` to run
 
 ---
 
-## PHASE A — Ingest test_1 (3 PDFs)
+## PHASE A — Ingest first test set
 
-5. **Copy** test_1 PDFs to staging (do NOT move — originals must remain for cleanup):
+Uses the first discovered test subdir.
+
+5. **Copy** all PDFs from the first test subdir to `pdf-staging/` (do NOT move — originals must remain):
    ```bash
-   cp pdf-staging/test_1/battiston_2017_climate.pdf pdf-staging/
-   cp pdf-staging/test_1/mercure_2018_macroeconomic.pdf pdf-staging/
-   cp pdf-staging/test_1/von_dulong_2023_concentration.pdf pdf-staging/
+   cp pdf-staging/<first_test_dir>/*.pdf pdf-staging/
    ```
 
 6. **Run ingest:** `.venv/bin/python3 scripts/ingest/ingest.py`
    Parse output to identify which text files were created in `data/text/` — these give you the paper IDs (stem of the filename).
 
-7. **Extract all 3 papers in parallel.** For each paper ID discovered:
+7. **Extract all papers in parallel.** For each paper ID discovered:
    - Run `paper-extractor` agent on `data/text/<id>.txt` → creates `data/extractions/<id>.json` + `<id>.refs.json`
    - If no DONE line in output, retry with `paper-extractor-large`
    - Run `paper-extractor-contexts` agent → creates `data/extractions/<id>.contexts.json`
@@ -88,9 +112,9 @@ No arguments runs the full suite. Future: `phase-a`, `phase-b`, `phase-c` to run
 
 10. **Run Phase A queries** (record pass/fail per query):
     - `duckdb_query.py stats`
-    - `duckdb_query.py owned` (expect 3 papers)
+    - `duckdb_query.py owned` (expect count matching number of PDFs ingested from first test dir)
     - `duckdb_query.py top-cited 5`
-    - `duckdb_query.py search "climate" --limit 5`
+    - Pick a keyword from one of the ingested paper titles and run: `duckdb_query.py search "<keyword>" --limit 5`
 
 11. **Save Phase A snapshot:**
     ```bash
@@ -99,20 +123,23 @@ No arguments runs the full suite. Future: `phase-a`, `phase-b`, `phase-c` to run
     cp data/db/contexts.json data/tmp/_test_phase_a/
     ```
 
+Track the cumulative count of owned papers so far (= number of PDFs from first test dir).
+
 ---
 
-## PHASE B — Ingest test_2 (2 PDFs, incremental)
+## PHASE B — Ingest second test set (incremental)
 
-12. **Copy** test_2 PDFs to staging:
+Uses the second discovered test subdir. **Skip this phase if only one test subdir exists.**
+
+12. **Copy** all PDFs from the second test subdir to `pdf-staging/`:
     ```bash
-    cp pdf-staging/test_2/mcglade_2015_geographical.pdf pdf-staging/
-    cp pdf-staging/test_2/tong_2019_committed.pdf pdf-staging/
+    cp pdf-staging/<second_test_dir>/*.pdf pdf-staging/
     ```
 
 13. **Run ingest:** `.venv/bin/python3 scripts/ingest/ingest.py`
     Parse output for new paper IDs.
 
-14. **Extract both papers in parallel** (same Pass 1+2 + merge flow as Phase A step 7).
+14. **Extract all new papers in parallel** (same Pass 1+2 + merge flow as Phase A step 7).
 
 15. **Link papers sequentially** (same as Phase A step 8 — use `data/extractions/<id>.json` not bare ID).
 
@@ -130,12 +157,12 @@ No arguments runs the full suite. Future: `phase-a`, `phase-b`, `phase-c` to run
     ```
 
 17. **Run Phase B queries** (record pass/fail per query). Use real paper IDs discovered during extraction:
-    - `duckdb_query.py stats` (expect 5 owned papers)
-    - `duckdb_query.py owned` (all 5 test papers)
+    - `duckdb_query.py stats` (expect total owned = sum of PDFs from all test dirs so far)
+    - `duckdb_query.py owned` (all test papers)
     - `duckdb_query.py top-cited 5`
-    - `duckdb_query.py search "fossil" --limit 5`
-    - `duckdb_query.py cites <one_test2_id> --limit 5`
-    - `duckdb_query.py cited-by <one_test1_id> --limit 5`
+    - Pick a keyword from one of the second-set paper titles and run: `duckdb_query.py search "<keyword>" --limit 5`
+    - `duckdb_query.py cites <one_phase_b_id> --limit 5`
+    - `duckdb_query.py cited-by <one_phase_a_id> --limit 5`
 
 ---
 
@@ -169,18 +196,180 @@ No arguments runs the full suite. Future: `phase-a`, `phase-b`, `phase-c` to run
 22. **Run Phase C queries:**
     - `duckdb_query.py stats` (papers should appear as external_owned)
     - `duckdb_query.py owned`
-    - `duckdb_query.py search "climate" --limit 5`
+    - Pick a keyword from any ingested paper title and run: `duckdb_query.py search "<keyword>" --limit 5`
+
+---
+
+## PHASE D — Change Tracking
+
+23. **Verify manifest exists and has entries** (written during Phases A–C):
+    ```bash
+    wc -l data/db_history/manifest.jsonl
+    ```
+    **FAIL Phase D** if file is missing or has 0 lines.
+
+24. **Verify patch files exist:**
+    ```bash
+    ls data/db_history/patches/*.json 2>/dev/null | wc -l
+    ```
+    **FAIL Phase D** if count is 0.
+
+25. **Display history:**
+    ```bash
+    .venv/bin/python3 scripts/build/rollback.py
+    ```
+    Record the number of entries shown.
+
+26. **Preview rollback (dry run):**
+    ```bash
+    .venv/bin/python3 scripts/build/rollback.py --dry-run --last 1
+    ```
+    Verify output describes a change without modifying files.
+
+27. **Apply rollback:**
+    ```bash
+    .venv/bin/python3 scripts/build/rollback.py --last 1
+    ```
+    **FAIL Phase D** if non-zero exit or error output.
+
+28. **Confirm entry count decreased:**
+    ```bash
+    .venv/bin/python3 scripts/build/rollback.py
+    ```
+    Verify entry count is one less than recorded in step 25 — **FAIL Phase D** if not.
+
+29. **Re-apply the undone change** (restores contexts.json):
+    ```bash
+    .venv/bin/python3 scripts/build/build_index.py
+    ```
+
+---
+
+## PHASE E — Duplicate Detection & Merge
+
+30. **Inject synthetic duplicate.** Run this Python snippet via Bash to add a `_v2` stub to the current test DB:
+    ```bash
+    .venv/bin/python3 - <<'PYEOF'
+import json
+from pathlib import Path
+db = json.loads(Path("data/db/papers.json").read_text())
+papers = db["papers"]
+stub = next(
+    (p for p in papers.values()
+     if p.get("type") == "stub" and p.get("cited_by") and p.get("authors")),
+    None
+)
+if not stub:
+    print("ERROR: no suitable stub found for injection")
+    raise SystemExit(1)
+v2_id = stub["id"] + "_v2"
+v2 = {
+    "id": v2_id,
+    "type": "stub",
+    "title": "Working paper: " + (stub.get("title") or ""),
+    "authors": list(stub.get("authors", [])),
+    "year": (stub.get("year") or 2020) - 1,
+    "doi": None,
+    "abstract": None,
+    "cites": [],
+    "cited_by": stub["cited_by"][:1],
+}
+papers[v2_id] = v2
+# update the shared citer to also point at v2
+for citing_id in v2["cited_by"]:
+    if citing_id in papers and v2_id not in papers[citing_id].get("cites", []):
+        papers[citing_id].setdefault("cites", []).append(v2_id)
+db["metadata"]["stub_count"] = sum(1 for p in papers.values() if p["type"] == "stub")
+Path("data/db/papers.json").write_text(
+    json.dumps(db, indent=2, ensure_ascii=False, sort_keys=True)
+)
+print(f"Injected: {stub['id']} + {v2_id}")
+PYEOF
+    ```
+    Capture `stub_id` (the original stub) and `v2_id` (its injected duplicate) from the output. **FAIL Phase E** if exit code non-zero.
+
+31. **Run detection:**
+    ```bash
+    .venv/bin/python3 scripts/build/find_duplicates.py --json
+    ```
+    Read `data/tmp/duplicate_candidates.json`. **FAIL Phase E** if `groups_found == 0` or if the injected pair (`stub_id` + `v2_id`) is not present in any group's paper list.
+
+32. **Write merge plan** — write `data/tmp/duplicate_merge_plan.json` using Bash:
+    ```bash
+    .venv/bin/python3 - <<'PYEOF'
+import json
+from pathlib import Path
+candidates = json.loads(Path("data/tmp/duplicate_candidates.json").read_text())
+# Find group containing the _v2 stub
+target_group = None
+for g in candidates["groups"]:
+    ids = [p["id"] for p in g["papers"]]
+    v2s = [pid for pid in ids if pid.endswith("_v2")]
+    if v2s:
+        v2_id = v2s[0]
+        canonical_id = g["recommended_canonical"]
+        alias_ids = [pid for pid in ids if pid != canonical_id]
+        target_group = {"canonical_id": canonical_id, "alias_ids": alias_ids}
+        break
+if not target_group:
+    print("ERROR: could not find injected pair in candidate groups")
+    raise SystemExit(1)
+plan = {"merges": [target_group]}
+Path("data/tmp/duplicate_merge_plan.json").write_text(json.dumps(plan, indent=2))
+print(f"Merge plan: {target_group['canonical_id']} <- {target_group['alias_ids']}")
+PYEOF
+    ```
+    **FAIL Phase E** if exit code non-zero.
+
+33. **Dry-run merge:**
+    ```bash
+    .venv/bin/python3 scripts/build/merge_duplicates.py --dry-run
+    ```
+    Verify output describes the expected merge (shows enrich/edges/refs summary). **FAIL Phase E** if exit code non-zero.
+
+34. **Actual merge:**
+    ```bash
+    .venv/bin/python3 scripts/build/merge_duplicates.py
+    ```
+    **FAIL Phase E** if exit code non-zero.
+
+35. **Validate:**
+    ```bash
+    .venv/bin/python3 scripts/build/check_db.py
+    ```
+    **FAIL Phase E** if exit code non-zero.
+    Verify by reading `papers.json`: the `_v2` stub now has `superseded_by` pointing to the canonical, and the canonical has `_v2` in its `aliases`.
+
+36. **Rollback the merge:**
+    ```bash
+    .venv/bin/python3 scripts/build/rollback.py --last 1
+    ```
+    **FAIL Phase E** if exit code non-zero. Run `check_db.py` again to confirm DB is clean after rollback.
+
+37. **Run unit tests:**
+    ```bash
+    .venv/bin/python3 scripts/build/test_find_duplicates.py
+    .venv/bin/python3 scripts/build/test_merge_duplicates.py
+    ```
+    **FAIL Phase E** if either exits non-zero.
 
 ---
 
 ## CLEANUP
 
-23. **Remove temp working dirs** (keep backup intact):
+38. **Remove temp working dirs** (keep backup intact):
     ```bash
     rm -rf data/tmp/_test_phase_a data/tmp/_test_merge_src 2>/dev/null || true
     ```
 
-24. **Report backup location.** Tell the user:
+39. **Restore db_history state** (remove test patches, restore real manifest):
+    ```bash
+    rm -f data/db_history/patches/test_*.json 2>/dev/null || true
+    ls data/db_history/patches/*.json 2>/dev/null | while read f; do rm -f "$f"; done || true
+    cp data/tmp/_test_backup/manifest.jsonl data/db_history/manifest.jsonl 2>/dev/null || true
+    ```
+
+40. **Report backup location.** Tell the user:
     - Test DB is now live in `data/db/`
     - Original DB backup is at `data/tmp/_test_backup/`
     - To restore: say "restore my DB" or "recreate the db"
@@ -189,25 +378,27 @@ No arguments runs the full suite. Future: `phase-a`, `phase-b`, `phase-c` to run
 
 ## FINAL REPORT
 
-After all phases and cleanup, output a results table:
+After all phases and cleanup, output a results table. Adapt row labels and expected counts based on the discovered test dirs (use actual subdir names and PDF counts):
 
 ```
 ## Test Results
 | Phase | Status | Details |
 |-------|--------|---------|
-| Setup | PASS/FAIL | DB backed up, empty DB initialized |
-| Phase A — ingest test_1 | PASS/FAIL | 3 papers ingested, extracted, linked; check_db exit 0 |
+| Setup | PASS/FAIL | N test dirs discovered, DB backed up, empty DB initialized |
+| Phase A — ingest <first_dir> | PASS/FAIL | N papers ingested, extracted, linked; check_db exit 0 |
 | Phase A — queries | PASS/FAIL | N/4 query commands returned data |
-| Phase B — ingest test_2 | PASS/FAIL | 2 papers ingested, extracted, linked; check_db exit 0 |
-| Phase B — queries | PASS/FAIL | N/6 query commands returned data |
+| Phase B — ingest <second_dir> | PASS/FAIL/SKIP | N papers ingested, extracted, linked; check_db exit 0 |
+| Phase B — queries | PASS/FAIL/SKIP | N/6 query commands returned data |
 | Phase C — DB merge | PASS/FAIL | N papers added as external_owned; check_db exit 0 |
 | Phase C — queries | PASS/FAIL | N/3 query commands returned data |
+| Phase D — change tracking | PASS/FAIL | Manifest has entries; rollback applied and confirmed; history restored |
+| Phase E — duplicate detect/merge | PASS/FAIL | Injected pair detected; merge plan written; dry-run OK; merge applied; check_db clean; rollback OK; unit tests pass |
 | Cleanup | PASS/FAIL | Temp dirs removed; test DB active in data/db/; backup at data/tmp/_test_backup/ |
 
 Overall: PASS / FAIL
 ```
 
-Fill in actual counts and any relevant error details for FAIL rows.
+Fill in actual subdir names, counts, and any relevant error details for FAIL rows.
 
 ---
 

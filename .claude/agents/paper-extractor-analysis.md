@@ -28,24 +28,24 @@ Given a text file path and a paper ID:
 ```json
 {
   "research_questions": [
-    "What is the stranded asset risk from coal investments in Southeast Asia under Paris Agreement scenarios?"
+    "How do network topology changes affect information flow efficiency in large-scale distributed systems?"
   ],
   "methodology": {
-    "approach": "Quantitative scenario analysis using Monte Carlo simulation",
-    "data": "Coal plant capacity data for 9 Southeast Asian countries, renewable cost projections, carbon price scenarios",
-    "methods": ["Monte Carlo simulation", "scenario analysis", "discounted cash flow"]
+    "approach": "Empirical analysis combining graph-theoretic metrics with simulation-based stress testing",
+    "data": "Network topology snapshots from 12 real-world systems over 5 years, synthetic benchmark graphs",
+    "methods": ["graph partitioning", "Monte Carlo simulation", "spectral analysis"]
   },
   "claims": [
     {
-      "claim": "Coal plants in Southeast Asia could start becoming stranded assets by 2042",
-      "evidence": "Monte Carlo analysis across renewable development and carbon pricing scenarios",
+      "claim": "Hub removal reduces network efficiency by 40-60% in scale-free topologies but only 5-15% in small-world topologies",
+      "evidence": "Systematic removal experiments across 12 network datasets",
       "strength": "strong"
     }
   ],
-  "keywords": ["stranded assets", "coal power", "Southeast Asia", "energy transition", "Paris Agreement"],
+  "keywords": ["network resilience", "graph topology", "distributed systems", "information flow", "robustness"],
   "topics": {
-    "primary": ["energy economics", "climate policy"],
-    "secondary": ["financial risk", "renewable energy", "carbon pricing"]
+    "primary": ["network science", "complex systems"],
+    "secondary": ["distributed computing", "graph theory", "resilience engineering"]
   }
 }
 ```
@@ -60,5 +60,4 @@ Given a text file path and a paper ID:
 - Extract 5–15 keywords
 - `topics.primary`: 1–3 high-level domain areas; `topics.secondary`: 2–5 more specific sub-areas
 - Do NOT remove or modify any existing fields in the JSON
-- The working directory is `/Users/jhurt/Documents/PaperClaw`
 - After writing, print: `DONE paper_id={id} claims={N} keywords={N}`

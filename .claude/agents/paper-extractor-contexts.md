@@ -27,7 +27,7 @@ You extract **citation contexts** from a paper's text. You are given:
 {
   "citations": [
     {
-      "id": "barabasi_1999_emergence",
+      "id": "watts_1998_collective",
       "contexts": [
         {
           "section": "Introduction",

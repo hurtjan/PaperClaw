@@ -25,12 +25,12 @@ Given a text file path and a paper ID:
   "sections": [
     {
       "heading": "Introduction",
-      "summary": "Motivates the study by establishing Southeast Asia's coal dependence and framing the stranded asset risk under Paris Agreement scenarios. Identifies the gap in quantitative risk assessment for the region.",
-      "annotated_text": "Southeast Asia has approximately 106 GW of active coal-fired generating capacity... [establishes scale] ...If the Paris Agreement is fulfilled, there is a risk that these assets will become stranded... [frames central risk] ...This study is the first to assess how uncertainties in renewable power development and carbon pricing affect... [states contribution]"
+      "summary": "Establishes the importance of network resilience in distributed systems and frames the research gap around topology-dependent failure modes. Reviews existing robustness metrics and identifies limitations.",
+      "annotated_text": "Modern distributed systems rely on complex network topologies to route information... [establishes context] ...While random failures are well-understood, targeted attacks on hub nodes remain poorly characterized across topology classes... [identifies gap] ...This study systematically compares failure responses across scale-free, small-world, and random network architectures... [states contribution]"
     },
     {
       "heading": "Methods and Data",
-      "summary": "Describes the Monte Carlo simulation framework, data sources for coal plant capacity across 9 countries, renewable cost projections, and carbon price scenarios.",
+      "summary": "Describes the experimental framework for systematic node removal, the 12 real-world network datasets used, and the graph-theoretic metrics employed to quantify resilience.",
       "annotated_text": "..."
     }
   ]
@@ -45,5 +45,4 @@ Given a text file path and a paper ID:
 - `summary`: 2–4 sentences capturing the section's purpose and key content — write at the level of a structured abstract
 - `annotated_text`: condensed version of the section text with inline bracketed annotations like `[establishes X]`, `[key result]`, `[caveat]`, `[method step N]`. Aim for 150–300 words per section. Quote key sentences verbatim; paraphrase the rest.
 - Do NOT remove or modify any existing fields in the JSON
-- The working directory is `/Users/jhurt/Documents/PaperClaw`
 - After writing, print: `DONE paper_id={id} sections={N}`

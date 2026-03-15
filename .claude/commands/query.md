@@ -8,12 +8,13 @@ Their query or topic: $ARGUMENTS
 
 ## Rules
 
+- **If /ingest was run in this context**, warn: _"This context was used for ingestion. For best results, it's recommended to run queries in a separate context."_ Ask to confirm before proceeding.
 - Run all queries via the Bash tool using the scripts below. Do NOT launch any subagents.
 - **NEVER write ad-hoc Python or shell scripts to read `data/db/papers.json`, `data/db/contexts.json`, or any extraction file directly.** All data access must go through the query scripts.
 - Always use **(Author, Year)** format. Never expose internal paper IDs.
 - All scripts: `.venv/bin/python3 scripts/query/<script>.py`
 - **Always use `--limit` on broad searches** to avoid flooding context. Start with `--limit 15` for `--search` and `--purpose`; drill down only if needed.
-- **Synonym expansion:** If a search returns <3 results, try synonyms or broader/narrower terms before concluding the topic is absent (e.g., regulation → policy / carbon pricing; engagement → stewardship / active ownership).
+- **Synonym expansion:** If a search returns <3 results, try synonyms or broader/narrower terms before concluding the topic is absent (e.g., regulation → policy / legislation; engagement → involvement / participation).
 - **Aim for 8–12 tool calls per query.** Beyond 15 you are likely over-exploring; under 5 you may be under-exploring. Parallelize independent calls in the same message to stay within budget.
 
 ---
@@ -31,6 +32,7 @@ Their query or topic: $ARGUMENTS
 - `sections` (paper_id, heading, summary, annotated_text)
 - `methodology` (paper_id PK, type, model_name, approach, temporal_scope, geographic_scope, unit_of_analysis, scenarios)
 - `data_sources` (paper_id, name, type, description) · `questions` (paper_id, question)
+- `citation_edges` (citing_id, cited_id) — complete citation graph from cites arrays; covers all edges, not just those with extracted contexts
 - `authors` (author_id PK, canonical_name, type, name_variants, paper_count INT, owned_paper_count INT) · `paper_authors` (paper_id, author_id)
 
 Key commands:
@@ -48,6 +50,10 @@ Key commands:
 - `cites <id> [--limit N]` · `cited-by <id> [--limit N]` — citation relationships with purpose/quote
 - `chain <id> [--depth N]` — recursive citation chain traversal (default depth 2)
 - `common-citers <id1> <id2>` — papers that cite both
+- `co-cited <id> [id2 ...] [--min N] [--limit N]` — co-citation: references frequently appearing alongside the given paper(s) in bibliographies
+- `bib-coupling <id> [id2 ...] [--min N] [--limit N]` — bibliographic coupling: papers with most overlapping bibliographies
+- `shared-refs <id1> <id2> [id3 ...]` — list cited references shared between papers
+- `shared-papers <author1> <author2> [author3 ...]` — papers co-authored by all given authors
 - `top-cited [N]` · `purpose <tag> [--limit N]`
 - `abstract <id>` · `claims <id>` · `keywords <id>` · `methodology <id>` · `sections <id>` · `questions <id>` · `data-sources <id>`
 - `pagerank [--seed ID ...] [--top N] [--owned] [--stubs] [--reverse] [--undirected] [--alpha FLOAT]` — in-database PageRank centrality
@@ -79,6 +85,8 @@ Examples: `pagerank --seed ID1 ID2 --top 15 --stubs` (find missing papers), `pag
    - What a paper argues → `duckdb_query.py abstract ID` / `claims ID` / `methodology ID`
    - Centrality analysis → `duckdb_query.py pagerank --seed ID --top 10` (add `--owned`/`--stubs`/`--reverse`/`--undirected` per strategy above)
    - Papers citing an owned paper → `duckdb_query.py cited-by ID --limit 10`
+   - Inverse network → `duckdb_query.py co-cited ID1 ID2 --limit 15` / `bib-coupling ID --limit 15` / `shared-refs ID1 ID2`
+   - Author overlap → `duckdb_query.py shared-papers AUTHOR1 AUTHOR2`
 3. Synthesize using (Author, Year) format and suggest follow-ups.
 
 **Avoid dumping 100+ results.** Use `--limit` to cap broad queries, then selectively expand.

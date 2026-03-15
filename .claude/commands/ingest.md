@@ -11,6 +11,7 @@ Arguments: $ARGUMENTS
 
 ## Rules
 
+- **If /query was run in this context**, warn: _"This context was used for querying. For best results, it's recommended to run ingestion in a separate context."_ Ask to confirm before proceeding.
 - Always use `.venv/bin/python3` for scripts.
 - Always invoke agents via the Agent tool, never via Bash.
 - **Responsibility split:** Agents comprehend, Python computes. Agents never read `data/db/papers.json`, `data/db/authors.json`, or `data/db/contexts.json` directly (too large). All writes go through `apply_link.py` / `apply_authors.py`.

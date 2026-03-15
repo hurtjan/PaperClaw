@@ -10,5 +10,19 @@
   "sandbox": {
     "enabled": true,
     "autoAllowBashIfSandboxed": true
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/hooks/check_onboarding.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }

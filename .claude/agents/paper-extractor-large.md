@@ -21,6 +21,4 @@ Same as paper-extractor (Haiku version), but you have more capacity for papers w
 5. Write JSON to `data/extractions/{paper_id}.json`
 6. Print: `DONE paper_id={id} citations={N} file=data/extractions/{id}.json`
 
-The working directory is `/Users/jhurt/Documents/PaperClaw`.
-
 `pdf_file`: derive from source_file by changing extension and prepending `data/pdfs/`.

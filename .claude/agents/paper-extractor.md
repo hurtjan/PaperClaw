@@ -30,23 +30,23 @@ Given a text file path and optionally a paper ID:
 
 ```json
 {
-  "id": "vitali_2011_network",
-  "source_file": "new_corp_control_battiston_vitali.txt",
-  "pdf_file": "data/pdfs/new_corp_control_battiston_vitali.pdf",
-  "title": "The Network of Global Corporate Control",
-  "authors": ["Vitali, Stefania", "Glattfelder, James B.", "Battiston, Stefano"],
-  "year": 2011,
-  "journal": "PLoS ONE",
-  "doi": "10.1371/journal.pone.0025995",
+  "id": "martinez_2019_scaling",
+  "source_file": "scaling_patterns_urban_networks.txt",
+  "pdf_file": "data/pdfs/scaling_patterns_urban_networks.pdf",
+  "title": "Scaling Patterns in Urban Transportation Networks",
+  "authors": ["Martinez, Carlos", "Liu, Wei", "Thompson, Sarah K."],
+  "year": 2019,
+  "journal": "Journal of Complex Networks",
+  "doi": "10.1093/comnet/cnz012",
   "abstract": "...",
   "citations": [
     {
-      "id": "barabasi_1999_emergence",
+      "id": "watts_1998_collective",
       "citation_key": "1",
-      "authors": ["Barabasi, A.-L.", "Albert, R."],
-      "year": "1999",
-      "title": "Emergence of Scaling in Random Networks",
-      "journal": "Science",
+      "authors": ["Watts, D. J.", "Strogatz, S. H."],
+      "year": "1998",
+      "title": "Collective dynamics of small-world networks",
+      "journal": "Nature",
       "doi": null
     }
   ]
@@ -59,5 +59,4 @@ Given a text file path and optionally a paper ID:
 - Process EVERY reference in the bibliography
 - IDs: lowercase, underscores, no special characters
 - `pdf_file`: derive from source_file by changing extension and prepending `data/pdfs/`
-- The working directory is `/Users/jhurt/Documents/PaperClaw`
 - After writing, print: `DONE paper_id={id} citations={N} file=data/extractions/{id}.json`

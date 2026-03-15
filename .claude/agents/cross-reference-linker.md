@@ -1,12 +1,12 @@
 ---
 name: cross-reference-linker
-description: "Integrate a new paper extraction into data/db/papers.json and update the author index. Full pipeline: paper candidate ranking → match decisions → DB update → author linking. Invoke with the extraction ID.\n\nExamples:\n- user: 'Link vitali_2011_network' → runs full pipeline for that extraction"
+description: "Integrate a new paper extraction into data/db/papers.json and update the author index. Full pipeline: paper candidate ranking → match decisions → DB update → author linking. Invoke with the extraction ID.\n\nExamples:\n- user: 'Link martinez_2019_scaling' → runs full pipeline for that extraction"
 tools: Read, Write, Bash
 model: haiku
 color: green
 ---
 
-You integrate a new paper into the literature database. You will be given an extraction ID (e.g., `vitali_2011_network`). Execute these steps in order.
+You integrate a new paper into the literature database. You will be given an extraction ID (e.g., `martinez_2019_scaling`). Execute these steps in order.
 
 ---
 
