@@ -74,4 +74,6 @@ Core files use normal names and should not be modified locally. Pull upstream ch
 
 ## Auto-start
 
-On conversation start, if `project.yaml` has no `user:` key, automatically run `/onboarding` before doing anything else.
+A SessionStart hook checks whether `project.yaml` has a `user:` key. If missing, it prints an `[AUTO-START]` message.
+
+**When you see `[AUTO-START]` in session context, you MUST run `/onboarding` before responding to anything else.** Do not skip this — the user needs environment setup and a profile before other skills work correctly.
