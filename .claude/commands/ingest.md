@@ -72,19 +72,85 @@ Also add a pointer to `MEMORY.md` in the memory directory. Then proceed with the
 
 If neither `--passes`, the memory file, nor a user prompt response is available, fall back to `project.yaml` defaults.
 
-### Passes
+### Per-paper extraction recipe
 
-Read `project.yaml` for which passes are enabled by default:
-- **Pass 1:** metadata + reference list (required) — `paper-extractor` agent (Haiku), fallback `paper-extractor-large` (Sonnet)
-- **Pass 2:** citation contexts (default on) — `paper-extractor-contexts` agent (Haiku), fallback `paper-extractor-contexts-large` (Sonnet)
-- **Pass 3:** paper analysis — methodology, claims, topics (optional) — `paper-extractor-analysis` agent (Haiku)
-- **Pass 4:** section detail — headings, summaries, annotated text (default on) — `paper-extractor-sections` agent (Haiku)
+For each paper ID from Phase 1, run these steps **in order**. Multiple papers can run this recipe **in parallel**.
 
-Run enabled passes. All extraction agents can run in parallel across papers. For each agent, if the output lacks a DONE line, retry with the `-large` fallback (Pass 1 and 2 only — Pass 3/4 have no large fallback).
+**Step 1 — Pass 1: Metadata + references** (required)
+
+Agent: `paper-extractor` (Haiku), fallback `paper-extractor-large` (Sonnet).
+
+Prompt (substitute the paper ID for `{id}`):
+
+    Extract metadata and references from: data/text/{id}.txt
+
+- Reads: `data/text/{id}.txt`
+- Writes: `data/extractions/{id}.json`
+- If no DONE line → retry with `paper-extractor-large`
+
+**Step 2 — Generate refs sidecar** (Bash, not an agent)
+
+```bash
+.venv/bin/python3 -c "import json; d=json.load(open('data/extractions/{id}.json')); json.dump([{'id':c['id'],'title':c.get('title',''),'authors':c.get('authors',''),'year':c.get('year','')} for c in d['citations']], open('data/extractions/{id}.refs.json','w'), indent=2)"
+```
+
+- Reads: `data/extractions/{id}.json`
+- Writes: `data/extractions/{id}.refs.json`
+
+**Step 3 — Pass 2: Citation contexts** (skip if Pass 2 disabled)
+
+Agent: `paper-extractor-contexts` (Haiku), fallback `paper-extractor-contexts-large` (Sonnet).
+
+Prompt (substitute the paper ID for `{id}`):
+
+    Extract citation contexts from: data/text/{id}.txt
+    Refs file: data/extractions/{id}.refs.json
+    Paper ID: {id}
+    Write output to: data/extractions/{id}.contexts.json
+
+- Reads: `data/text/{id}.txt`, `data/extractions/{id}.refs.json`
+- Writes: `data/extractions/{id}.contexts.json` — **not** `{id}.json`
+- If no DONE line → retry with `paper-extractor-contexts-large` using the **same prompt**
+
+**Step 4 — Merge passes 1+2**
+
+```bash
+.venv/bin/python3 scripts/ingest/merge_extraction.py {id}
+```
+
+- Reads: `{id}.json`, `{id}.contexts.json`, `{id}.refs.json`
+- Writes: `{id}.json` (merged), deletes sidecar files
+- **Must run BEFORE Passes 3/4** (they write in-place to the merged JSON)
+
+**Step 5 — Pass 3: Analysis** (skip if Pass 3 disabled)
+
+Agent: `paper-extractor-analysis` (Haiku), no large fallback.
+
+Prompt (substitute the paper ID for `{id}`):
+
+    Analyze paper: data/text/{id}.txt
+    Paper ID: {id}
+    Extraction JSON: data/extractions/{id}.json
+
+- Reads: `data/text/{id}.txt`, `data/extractions/{id}.json`
+- Writes: `data/extractions/{id}.json` (in-place merge)
+- If no DONE line → log warning and continue
+
+**Step 6 — Pass 4: Sections** (skip if Pass 4 disabled; must wait for Step 5)
+
+Agent: `paper-extractor-sections` (Haiku), no large fallback.
+
+Prompt (substitute the paper ID for `{id}`):
+
+    Extract sections from: data/text/{id}.txt
+    Paper ID: {id}
+    Extraction JSON: data/extractions/{id}.json
+
+- Reads: `data/text/{id}.txt`, `data/extractions/{id}.json`
+- Writes: `data/extractions/{id}.json` (in-place merge)
+- If no DONE line → log warning and continue
 
 For large papers, run `.venv/bin/python3 scripts/ingest/split_paper.py` to split text before extraction.
-
-After all passes complete, run `.venv/bin/python3 scripts/ingest/merge_extraction.py` to combine per-pass outputs into a single extraction JSON per paper.
 
 **Paths:** `data/text/` (input), `data/extractions/` (output), `project.yaml` (pass config)
 
@@ -94,7 +160,7 @@ After all passes complete, run `.venv/bin/python3 scripts/ingest/merge_extractio
 
 For each newly extracted paper, sequentially:
 
-1. Run `.venv/bin/python3 scripts/link/link_paper.py <paper_id>` to prepare candidates.
+1. Run `.venv/bin/python3 scripts/link/link_paper.py data/extractions/{id}.json` to prepare candidates.
 2. Run the `cross-reference-linker` agent — it handles match decisions, calls `apply_link.py`, and triggers `author-resolver` as needed.
 
 **Key constraint:** The `cross-reference-linker` agent runs sequentially (one paper at a time, NOT parallel).

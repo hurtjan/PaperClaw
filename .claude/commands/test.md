@@ -86,12 +86,39 @@ Uses the first discovered test subdir.
 6. **Run ingest:** `.venv/bin/python3 scripts/ingest/ingest.py`
    Parse output to identify which text files were created in `data/text/` — these give you the paper IDs (stem of the filename).
 
-7. **Extract all papers in parallel.** For each paper ID discovered:
-   - Run `paper-extractor` agent on `data/text/<id>.txt` → creates `data/extractions/<id>.json` + `<id>.refs.json`
-   - If no DONE line in output, retry with `paper-extractor-large`
-   - Run `paper-extractor-contexts` agent → creates `data/extractions/<id>.contexts.json`
-   - If no DONE line, retry with `paper-extractor-contexts-large`
-   - Run `.venv/bin/python3 scripts/ingest/merge_extraction.py <id>`
+7. **Extract all papers in parallel.** For each paper ID discovered, run these steps in order:
+   - **Pass 1:** Run `paper-extractor` agent with prompt (substitute the paper ID for `{id}`):
+     ```
+     Extract metadata and references from: data/text/{id}.txt
+     ```
+     Creates `data/extractions/{id}.json`. If no DONE line → retry with `paper-extractor-large`.
+   - **Refs sidecar** (Bash):
+     ```bash
+     .venv/bin/python3 -c "import json; d=json.load(open('data/extractions/{id}.json')); json.dump([{'id':c['id'],'title':c.get('title',''),'authors':c.get('authors',''),'year':c.get('year','')} for c in d['citations']], open('data/extractions/{id}.refs.json','w'), indent=2)"
+     ```
+   - **Pass 2:** Run `paper-extractor-contexts` agent with prompt:
+     ```
+     Extract citation contexts from: data/text/{id}.txt
+     Refs file: data/extractions/{id}.refs.json
+     Paper ID: {id}
+     Write output to: data/extractions/{id}.contexts.json
+     ```
+     If no DONE line → retry with `paper-extractor-contexts-large` using the **same prompt**.
+   - **Merge:** `.venv/bin/python3 scripts/ingest/merge_extraction.py {id}`
+   - **Pass 3:** Run `paper-extractor-analysis` agent with prompt:
+     ```
+     Analyze paper: data/text/{id}.txt
+     Paper ID: {id}
+     Extraction JSON: data/extractions/{id}.json
+     ```
+     If no DONE line, log a warning and continue.
+   - **Pass 4:** Run `paper-extractor-sections` agent with prompt:
+     ```
+     Extract sections from: data/text/{id}.txt
+     Paper ID: {id}
+     Extraction JSON: data/extractions/{id}.json
+     ```
+     If no DONE line, log a warning and continue.
 
 8. **Link papers sequentially.** For each paper ID (one at a time):
    - `.venv/bin/python3 scripts/link/link_paper.py data/extractions/<id>.json`
@@ -139,7 +166,7 @@ Uses the second discovered test subdir. **Skip this phase if only one test subdi
 13. **Run ingest:** `.venv/bin/python3 scripts/ingest/ingest.py`
     Parse output for new paper IDs.
 
-14. **Extract all new papers in parallel** (same Pass 1+2 + merge flow as Phase A step 7).
+14. **Extract all new papers in parallel** (same Pass 1–4 + merge flow as Phase A step 7).
 
 15. **Link papers sequentially** (same as Phase A step 8 — use `data/extractions/<id>.json` not bare ID).
 
@@ -410,4 +437,6 @@ Fill in actual subdir names, counts, and any relevant error details for FAIL row
 | `paper-extractor-large` | Sonnet | yes | Pass 1 fallback |
 | `paper-extractor-contexts` | Haiku | yes | Pass 2: citation contexts |
 | `paper-extractor-contexts-large` | Sonnet | last resort | Pass 2 fallback |
+| `paper-extractor-analysis` | Haiku | yes | Pass 3: methodology, claims, topics |
+| `paper-extractor-sections` | Haiku | yes | Pass 4: section headings, summaries, annotated text |
 | `cross-reference-linker` | Haiku | **no** | Full incremental linking pipeline |

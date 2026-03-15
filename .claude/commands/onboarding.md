@@ -25,10 +25,7 @@ Report what was found and what (if anything) was fixed.
 Read `project.yaml` (or note that it doesn't exist yet).
 
 **If no `user:` key exists:**
-- Ask the user for the following. Name is required; the others are optional and can be skipped:
-  - Name
-  - Research focus (e.g. "climate finance", "NLP", "epidemiology")
-  - Institution (optional)
+- Ask the user for their **name only**. Explain that it is used to tag database change history (JSON Patch deltas) so edits can be attributed and rolled back by author.
 - Once they answer, write to `project.yaml` under the `user:` key using this Python snippet (adapt values as needed):
 
 ```python
@@ -37,8 +34,6 @@ p = pathlib.Path("project.yaml")
 data = yaml.safe_load(p.read_text()) if p.exists() else {}
 data["user"] = {
     "name": "NAME",
-    "research_focus": "FOCUS",   # omit key if not provided
-    "institution": "INST",       # omit key if not provided
     "onboarded_at": str(datetime.date.today()),
 }
 p.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
@@ -51,7 +46,44 @@ Run this with `.venv/bin/python3 -c "..."` (inline the snippet).
 - Offer to update their profile if they'd like, but do not re-ask for their details unprompted.
 - Continue to Step 3.
 
-## Step 3 — Skills overview
+## Step 3 — Extraction defaults
+
+Check whether `ingest_defaults.md` exists in the memory directory.
+
+**If it exists:** Show the current setting (e.g. "Default passes: 1, 2, 4") and offer to change it, but do not re-prompt unprompted.
+
+**If it does not exist:** Explain the extraction passes and ask which to run by default:
+
+> **Extraction depth:** When you ingest a PDF, PaperClaw runs up to 4 extraction passes. Which should be your default?
+>
+> | Pass | What it extracts |
+> |---|---|
+> | 1 | Metadata + full reference list (required) |
+> | 2 | Citation contexts — where and why each reference is cited |
+> | 3 | Research questions, methodology, claims, keywords, topics |
+> | 4 | Section headings, per-section summaries, annotated text |
+>
+> **Recommendation: all 4 passes** (full extraction). Lighter option: 1 + 2 only (skips deep analysis).
+> Which passes do you want as your default? (e.g. "all", "1 2 4", "1 2")
+
+Once the user answers, save their choice to `ingest_defaults.md` in the memory directory:
+
+```markdown
+---
+name: ingest_defaults
+description: User's preferred default extraction passes for /ingest
+type: feedback
+---
+
+Default extraction passes: [1, 2, 3, 4]
+
+**Why:** User chose these during onboarding.
+**How to apply:** Use these passes in /ingest Phase 2 unless overridden by --passes flag.
+```
+
+Also add a pointer to `MEMORY.md` in the memory directory if one is not already present.
+
+## Step 4 — Skills overview
 
 Present the available skills grouped by workflow phase. Use a clean table or grouped list:
 
@@ -64,13 +96,13 @@ Present the available skills grouped by workflow phase. Use a clean table or gro
 
 **Expanding your corpus**
 - `/pull-citing` — Fetch papers that cite your owned papers from Semantic Scholar (forward citations).
-- `/fetch-preprints` — Download open-access PDFs from arXiv, bioRxiv, medRxiv, or SSRN.
+- `/fetch-preprints` — Download open-access PDFs from arXiv, bioRxiv, and medRxiv (SSRN only if Semantic Scholar has a cached copy — SSRN itself is login-walled).
 
 **Maintenance**
 - `/onboarding` — Re-run setup, update your profile, or re-read this orientation.
 - `/test` — Run the end-to-end pipeline test to verify everything works.
 
-## Step 4 — Usage guide + Semantic Scholar explainer
+## Step 5 — Usage guide + Semantic Scholar explainer
 
 Show the core workflow as a numbered list:
 
@@ -87,11 +119,11 @@ Then explain Semantic Scholar integration:
 > Two skills connect to the Semantic Scholar API to expand your corpus beyond what PDF extraction can see:
 >
 > - **`/pull-citing`** finds papers published *after* your ingested papers that cite them — forward citations that simply don't exist in any PDF's reference list.
-> - **`/fetch-preprints`** downloads open-access PDFs from arXiv, bioRxiv, medRxiv, and SSRN so you can ingest them directly.
+> - **`/fetch-preprints`** downloads open-access PDFs from arXiv, bioRxiv, and medRxiv so you can ingest them directly. SSRN papers are only available if Semantic Scholar has a cached open-access copy (SSRN itself requires login).
 >
 > Both work without authentication, but setting the `S2_API_KEY` environment variable gives you higher rate limits for large corpora.
 
-## Step 5 — Project state
+## Step 6 — Project state
 
 Assess the current state of the database:
 
@@ -102,7 +134,7 @@ Give the user a brief, plain-English status:
 - How many papers are in the database (if any), broken down by type (owned / external / stubs)
 - Whether there are PDFs waiting in staging
 
-## Step 6 — What to do next + example queries
+## Step 7 — What to do next + example queries
 
 Based on the project state, suggest the most useful next step:
 
@@ -111,7 +143,7 @@ Based on the project state, suggest the most useful next step:
 - **Database has papers, PDFs in staging:** "You have N PDFs waiting — run `/ingest` to add them."
 - **Database has papers, nothing in staging:** "Your database is set up with N papers. Try `/query <your question>` to explore your literature."
 
-Then show example queries that demonstrate the power of the cross-referenced corpus. If the user provided a `research_focus`, adapt the topic placeholders to their field. Otherwise use the defaults below.
+Then show example queries that demonstrate the power of the cross-referenced corpus.
 
 **Cross-corpus analysis:**
 - "Which papers discuss [topic], and what methodologies do they use?"

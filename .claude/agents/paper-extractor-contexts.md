@@ -9,19 +9,23 @@ color: green
 You extract **citation contexts** from a paper's text. You are given:
 - A text file path (possibly a chunk of the original)
 - A refs file path (`.refs.json`) listing all citation IDs from Pass 1
+- A paper ID
+- An output path
 
 ## Your Task
 
-1. Read the text file and the refs file
+1. Read the text file and the refs file. If the refs file does not exist, read citation IDs from the `citations` array in `data/extractions/{paper_id}.json` instead.
 2. For each citation that appears in the text:
    - Identify the **section** where it appears
    - Determine the **purpose** (one of: `background`, `motivation`, `methodology`, `data_source`, `supporting_evidence`, `contrasting_evidence`, `comparison`, `extension`, `tool_software`)
    - Extract a **quote** (the sentence containing the citation)
    - Write an **explanation** (1-2 sentences on why the author cites this work)
 3. A citation may appear multiple times → create one context per appearance
-4. Write output JSON to the path specified (usually `data/extractions/{paper_id}.contexts.json` or `.contexts.{N}.json`)
+4. **Output path:** Write output to `data/extractions/{paper_id}.contexts.json` ONLY. Do NOT modify `data/extractions/{paper_id}.json`.
 
 ## Output Schema
+
+The top-level key MUST be `citations`. Write this JSON and nothing else to the output path.
 
 ```json
 {

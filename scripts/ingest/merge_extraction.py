@@ -41,8 +41,29 @@ def load_contexts(base_dir: str, paper_id: str) -> tuple[dict, list[str]]:
     elif os.path.exists(single_path):
         paths = [single_path]
     else:
-        print(f'ERROR: no contexts file(s) found for {paper_id}', file=sys.stderr)
-        sys.exit(1)
+        # No sidecar — try recovering inline contexts from main JSON
+        inline_path = os.path.join(base_dir, f'{paper_id}.json')
+        if os.path.exists(inline_path):
+            with open(inline_path) as f:
+                main_data = json.load(f)
+            contexts_by_id = {}
+            # Pattern A: citation_contexts top-level key
+            for entry in main_data.get('citation_contexts', []):
+                if isinstance(entry, dict) and entry.get('id'):
+                    contexts_by_id.setdefault(entry['id'], []).extend(entry.get('contexts', []))
+            # Pattern B: citations[].contexts already populated
+            if not contexts_by_id:
+                for cit in main_data.get('citations', []):
+                    cid = cit.get('id')
+                    ctxs = cit.get('contexts', [])
+                    if cid and ctxs:
+                        contexts_by_id.setdefault(cid, []).extend(ctxs)
+            if contexts_by_id:
+                n = sum(len(v) for v in contexts_by_id.values())
+                print(f'NOTE: recovered {n} inline contexts for {paper_id} (agent wrote to main JSON)', file=sys.stderr)
+                return contexts_by_id, []
+        print(f'WARNING: no contexts found for {paper_id} — skipping Pass 2', file=sys.stderr)
+        return {}, []
 
     contexts_by_id = {}
     for path in paths:
@@ -139,6 +160,9 @@ def merge(paper_id: str):
 
     with open(pass1_path) as f:
         extraction = json.load(f)
+
+    # Strip non-standard key that agents sometimes create
+    extraction.pop('citation_contexts', None)
 
     contexts_by_id, contexts_paths = load_contexts(base_dir, paper_id)
 
