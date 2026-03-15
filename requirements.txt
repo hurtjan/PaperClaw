@@ -1,0 +1,4 @@
+rapidfuzz
+pymupdf
+duckdb
+pyyaml

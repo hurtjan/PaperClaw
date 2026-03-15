@@ -1,0 +1,43 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.DS_Store
+
+# User database (keep SCHEMA.md tracked)
+data/db/*.json
+data/db/lit.duckdb
+data/db/lit.duckdb.wal
+
+# User content
+data/extractions/*
+!data/extractions/.gitkeep
+data/pdfs/*
+!data/pdfs/.gitkeep
+data/text/*
+!data/text/.gitkeep
+data/tmp/*
+!data/tmp/.gitkeep
+data/db_history/*
+!data/db_history/.gitkeep
+data/db_imports/*
+!data/db_imports/.gitkeep
+
+# User working directories
+pdf-staging/*
+!pdf-staging/.gitkeep
+research/*
+!research/.gitkeep
+
+# Extensions cache
+.duckdb_extensions/
+
+# Claude Code user-specific
+.claude/settings.local.json
+.claude/plans/
+.claude/agent-memory-local/
+
+# User custom agents and commands (local-* prefix)
+.claude/agents/local-*.md
+.claude/commands/local-*.md

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python3 scripts/ingest/ingest.py --dry-run)",
+      "Bash(.venv/bin/python3 scripts/ingest/ingest.py)",
+      "Bash(.venv/bin/python3 scripts/query/duckdb_query.py *)",
+      "Bash(.venv/bin/python3 scripts/query/corpus.py *)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  }
+}

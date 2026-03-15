@@ -1,0 +1,18 @@
+project:
+  name: PaperClaw
+  description: Literature database and citation graph
+
+extraction:
+  extractor_name: paperclaw_extractor
+  default_passes: [1, 2, 4]
+  available_passes:
+    1: "Metadata + reference list"
+    2: "Citation contexts"
+    3: "Paper analysis (research questions, methodology, claims, keywords, topics)"
+    4: "Section detail (headings, summaries, annotated text)"
+  default_model: haiku
+  pass_agents:
+    1: paper-extractor
+    2: paper-extractor-contexts
+    3: paper-extractor-analysis
+    4: paper-extractor-sections

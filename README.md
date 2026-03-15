@@ -1,0 +1,171 @@
+# PaperClaw
+
+Academic papers are trapped in PDFs. You can read them one at a time, but you can't search across their reference lists, trace citation chains, or ask "which papers cite X as methodology?" without manually reading everything. PaperClaw fixes this.
+
+It transforms a collection of academic PDFs into a cross-referenced, queryable citation graph — complete with full-text search, citation contexts, author entities, and network analysis. The system runs inside [Claude Code](https://docs.anthropic.com/en/docs/claude-code): AI agents handle comprehension (reading papers, generating IDs, making match decisions) while Python scripts handle mechanics (scoring, indexing, assembly).
+
+## Setup
+
+```bash
+git clone <repo-url> PaperClaw
+cd PaperClaw
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python3 scripts/build/install_fts.py
+```
+
+## Quick start
+
+1. Drop PDFs into `pdf-staging/`
+2. Run `/ingest` in Claude Code
+3. Run `/query <your question>` to search your literature
+
+## Ingestion
+
+`/ingest` runs a four-phase pipeline that takes a PDF from raw file to fully integrated database entry.
+
+### Phase 1: PDF intake
+
+Each PDF in `pdf-staging/` is processed by `ingest.py`:
+
+- **Text extraction** via PyMuPDF — produces plain text with page markers
+- **Duplicate detection** — fuzzy-matches the title/authors against existing database entries using multi-signal scoring (DOI, author+year, title similarity)
+- Clean papers are moved to `data/pdfs/` with their text saved to `data/text/`
+
+### Phase 2: Multi-pass extraction
+
+AI agents read the extracted text and produce structured JSON. Extraction runs up to four passes, configured in `project.yaml` (defaults: 1, 2, 4):
+
+| Pass | Agent | Extracts |
+|------|-------|----------|
+| **1** | `paper-extractor` | Paper ID, title, authors, abstract, year, DOI, and a complete reference list |
+| **2** | `paper-extractor-contexts` | For each citation: the section, purpose (e.g. `background`, `methodology`, `supporting_evidence`), the exact quote, and an explanation of why it's cited |
+| **3** | `paper-extractor-analysis` | Research questions, methodology, claims (with confidence levels), keywords, topics |
+| **4** | `paper-extractor-sections` | Section headings, summaries, and condensed annotated text |
+
+Each pass writes a sidecar file (e.g. `.contexts.json`, `.sections.json`). After all passes complete, `merge_extraction.py` combines them into a single extraction JSON with full provenance metadata (which models ran, agent versions, date). Large papers are automatically split into page-range chunks for parallel extraction.
+
+### Phase 3: Linking
+
+This is where extracted citations get wired into the database. For each citation in the extraction:
+
+1. **`link_paper.py`** scores it against every existing database entry using a multi-signal system:
+   - Exact ID or DOI match: +4 points
+   - First-author + year match: +2
+   - High title similarity (≥90%): +2, moderate (70-90%): +1
+
+2. Citations are bucketed: **auto-matched** (≥4 points), **needs judgment** (1-3), or **new** (no candidates).
+
+3. The **cross-reference-linker** agent reviews ambiguous matches and makes decisions. Its resolved judgments are applied by `apply_link.py`, which creates or updates database entries and wires bidirectional `cites`/`cited_by` links.
+
+4. **Author entity resolution** follows the same pattern — `link_authors.py` generates candidates, the `author-resolver` agent handles ambiguities, and `apply_authors.py` writes the results.
+
+### Phase 4: Database rebuild
+
+After linking, the database indexes are rebuilt:
+- **Context index** (`contexts.json`) — citation contexts indexed by cited paper and by purpose
+- **Network graph** — sparse adjacency matrix for PageRank and centrality analysis
+- **Consistency check** — validates bidirectional links, required fields, no orphans or dangling references
+
+## The database
+
+The database lives in `data/db/` as three JSON files plus a derived query layer.
+
+### papers.json
+
+Every paper is one of three types:
+
+| Type | Meaning |
+|------|---------|
+| **`owned`** | You have the PDF. Full extraction, full metadata, complete reference list. |
+| **`external_owned`** | Imported from another corpus (see [Merging](#merging-databases)). Full metadata, no local PDF. |
+| **`stub`** | Referenced by an owned paper but you don't have it. Minimal metadata from the citing paper's reference list. |
+
+All papers carry bidirectional citation links: `cites` (what this paper references) and `cited_by` (which owned papers reference it). These are enforced to be consistent by `check_db.py`.
+
+### contexts.json
+
+Records *how* each citation is used — not just that paper A cites paper B, but the section, the exact quote, the purpose (`background`, `methodology`, `supporting_evidence`, `contrasting_evidence`, etc.), and an agent-generated explanation. Indexed two ways: by cited paper (look up everything said about a paper) and by purpose (find all methodological citations across the corpus).
+
+### authors.json
+
+Entity-resolved author index. Handles name variants (e.g. "J. Smith" and "John Smith" → same entity), tracks which papers each author appears in, and maintains a coauthor graph. Includes both persons and institutional authors.
+
+### Network graph
+
+A sparse adjacency matrix (scipy CSR format) built from the citation links in `papers.json`. Enables PageRank and Katz centrality analysis to find the most structurally important papers in your corpus.
+
+## Querying
+
+The `/query` command lets you search and explore your literature database using natural language. Under the hood, all data access goes through CLI scripts — the agent never reads the multi-megabyte JSON files directly.
+
+### How it works
+
+`duckdb_query.py` loads the three JSON files plus all extraction data into an in-memory DuckDB database with **BM25 full-text search** indexes across seven tables (papers, contexts, claims, sections, keywords, topics, authors). This gives the agent fast, structured access to the entire corpus through simple CLI calls.
+
+### What you can do
+
+- **Full-text search** — BM25-ranked search across titles, abstracts, claims, section summaries, and more
+- **Citation chains** — trace references forward or backward with configurable depth (uses recursive SQL)
+- **Purpose filtering** — find all papers cited as methodology, or as contrasting evidence, etc.
+- **Author lookup** — search by author, list coauthors, find an author's full publication list
+- **Network analysis** — PageRank and Katz centrality to find structurally central papers; personalized PageRank seeded from specific papers; reverse mode to find surveys
+- **Raw SQL** — escape hatch for arbitrary DuckDB queries when built-in commands aren't enough
+
+If DuckDB is unavailable, fallback scripts query the JSON files directly with substring matching.
+
+## Merging databases
+
+Different researchers using PaperClaw independently build separate citation graphs — one person might have 50 papers on climate finance, another 30 on network economics, with partial overlap. `/merge` combines them into a single unified database.
+
+```
+/merge <source_dir> [--name <label>] [--enrich] [--force]
+```
+
+### How it works
+
+`merge_db.py` applies type-aware merge logic:
+
+- **Your owned papers are sacrosanct** — the merge never overwrites a locally owned paper's metadata or links
+- **External owned papers** become `external_owned` entries in your DB — full metadata (title, authors, cites, cited_by) without local PDF files. A `source_db` field tracks provenance
+- **Stubs get upgraded** — if the other corpus has full metadata for a paper you only have as a stub, it's promoted to `external_owned`
+- **Enrichment mode** (`--enrich`) fills in missing fields (DOIs, abstracts, S2 IDs) on overlapping entries without overwriting existing data
+
+After merging papers, the script repairs all bidirectional citation links (removing dangling references, enforcing symmetry), merges citation contexts with deduplication, rebuilds the author index, and runs a full consistency check.
+
+### Adopting imported papers
+
+If you later obtain the PDF for an `external_owned` paper, `/ingest` detects the match and promotes it to `owned` — then you can run full extraction and linking on it.
+
+## Semantic Scholar enrichment
+
+`/pull-citing` connects your local database to Semantic Scholar's broader graph:
+
+- **Forward citations** — discover papers published *after* yours that cite them (something PDF extraction alone can't do)
+- **S2 ID backfill** — resolve Semantic Scholar paper IDs for your stubs, enabling richer cross-referencing
+
+## Commands
+
+| Command | Purpose |
+|---------|---------|
+| `/ingest` | Full pipeline: PDF intake → extraction → linking → DB rebuild |
+| `/query` | Query the literature database for research |
+| `/merge` | Import an external PaperClaw database into the local DB |
+| `/pull-citing` | Fetch forward citations and backfill S2 IDs from Semantic Scholar |
+
+## Customization
+
+Add custom agents or commands with the `local-` prefix — these are gitignored and won't conflict with upstream updates:
+
+- `.claude/agents/local-my-agent.md`
+- `.claude/commands/local-my-command.md`
+
+Extraction passes and models are configured in `project.yaml`.
+
+## Updating
+
+```bash
+git pull
+```
+
+Your database (`data/db/`), extractions (`data/extractions/`), PDFs (`data/pdfs/`), and `local-*` customizations are never touched by upstream changes.
