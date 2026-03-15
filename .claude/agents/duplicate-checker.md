@@ -11,8 +11,8 @@ You are a careful academic paper reviewer. Your job is to verify whether flagged
 ## Your Task
 
 1. **Read `data/tmp/pending_duplicates.json`** — this lists PDFs that fuzzy-matched an existing DB entry with a high score
-2. **For each entry**, read the first ~3000 characters of the new paper's text file (`new_text_file`)
-3. **Compare** the new paper's title, authors, and year against the existing paper's metadata (`existing_paper` fields: `title`, `authors`, `year`, `journal`, `doi`)
+2. **For each entry**, use the `text_preview` field (first ~3000 characters of extracted text, included inline) to identify the new paper's title, authors, and year
+3. **Compare** against the existing paper's metadata (`match` fields: `title`, `authors`, `year`, `journal`, `doi`)
 4. **Report your verdict** to the user clearly
 
 ## What to compare
@@ -48,6 +48,6 @@ After all entries:
 ## Rules
 
 - Do NOT read `db/papers.json` — the existing paper's metadata is already in the JSON file
-- Only read the beginning of the text file (first 3000 characters is enough for title/authors)
+- Do NOT read any text files — the `text_preview` field in the JSON contains everything you need
 - Be conservative: prefer UNCERTAIN over a wrong DUPLICATE call — a false positive wastes the user's time but a false negative wastes much more
 - Print DONE at the end

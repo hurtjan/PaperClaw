@@ -22,7 +22,7 @@ Arguments: $ARGUMENTS
 
 ## Phase 1 — PDF Intake
 
-1. Run `.venv/bin/python3 scripts/ingest/check_new_pdfs.py` to see what's in staging.
+1. Run `.venv/bin/python3 scripts/ingest/check_new_pdfs.py` to check for unprocessed PDFs in storage (PDFs in `data/pdfs/` lacking extracted text in `data/text/`).
 2. Run `.venv/bin/python3 scripts/ingest/ingest.py` — extracts text, checks duplicates, moves accepted PDFs to `data/pdfs/`.
 3. If ingest reports potential duplicates, run the `duplicate-checker` agent — it reads `data/tmp/pending_duplicates.json` and tells the user whether each is a true duplicate.
 4. If ingest reports **EXTERNAL MATCH** lines, run `.venv/bin/python3 scripts/ingest/adopt_import.py <paper_id>` for each — this promotes the `external_owned` entry to `owned` and wires up the local PDF/text paths. The paper is then ready for normal extraction in Phase 2.
@@ -74,7 +74,7 @@ If neither `--passes`, the memory file, nor a user prompt response is available,
 
 ### Per-paper extraction recipe
 
-For each paper ID from Phase 1, run these steps **in order**. Multiple papers can run this recipe **in parallel**.
+For each accepted text file from Phase 1, run these steps **in order**. The Pass 1 agent generates the paper ID — use it (from the DONE line) for all subsequent steps. Multiple papers can run this recipe **in parallel**.
 
 **Step 1 — Pass 1: Metadata + references** (required)
 
@@ -160,8 +160,7 @@ For large papers, run `.venv/bin/python3 scripts/ingest/split_paper.py` to split
 
 For each newly extracted paper, sequentially:
 
-1. Run `.venv/bin/python3 scripts/link/link_paper.py data/extractions/{id}.json` to prepare candidates.
-2. Run the `cross-reference-linker` agent — it handles match decisions, calls `apply_link.py`, and triggers `author-resolver` as needed.
+1. Run the `cross-reference-linker` agent with the extraction ID — it handles candidate ranking, match decisions, `apply_link.py`, and author linking.
 
 **Key constraint:** The `cross-reference-linker` agent runs sequentially (one paper at a time, NOT parallel).
 
@@ -171,9 +170,9 @@ For each newly extracted paper, sequentially:
 
 ## Phase 4 — Database Rebuild
 
-1. `.venv/bin/python3 scripts/build/build_index.py` — rebuild query index (note: `apply_link.py` already rebuilds automatically, but run for safety)
-2. `.venv/bin/python3 scripts/build/check_db.py` — consistency check
-3. `.venv/bin/python3 scripts/query/duckdb_query.py rebuild` — rebuild DuckDB query database
+1. `.venv/bin/python3 scripts/query/duckdb_query.py rebuild` — rebuild DuckDB query database
+
+Note: `apply_link.py` (Phase 3) already rebuilds the context index and runs the consistency check.
 
 **Paths:** `data/db/contexts.json`, `data/db/lit.duckdb`
 
@@ -187,7 +186,7 @@ Only needed when building a database from scratch using existing extraction file
 2. Run `match-resolver` agent — resolve cross-references
 3. `.venv/bin/python3 scripts/build/build_db.py` — finalize DB
 4. `.venv/bin/python3 scripts/build/build_authors.py` — build author index
-5. Then run Phase 4 (index + network + check)
+5. Then run Phase 4 (context index + consistency check + DuckDB rebuild)
 
 ---
 

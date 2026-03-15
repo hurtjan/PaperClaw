@@ -183,7 +183,7 @@ def main():
                     print(f"    New PDF:  {new_title[:80]}")
                     print(f"    In DB:    {match['title'][:80]} ({match['id']})")
                     print(f"  → PDF left in staging. Remove it manually if confirmed duplicate.")
-                    duplicates.append((pdf_path.name, match))
+                    duplicates.append((pdf_path.name, match, text[:3000]))
 
                     # Clean up extracted text if it was written by a previous partial run
                     if text_path.exists():
@@ -222,17 +222,17 @@ def main():
             print(f"  {name}")
     if duplicates:
         print(f"Duplicates (left in staging): {len(duplicates)}")
-        for name, match in duplicates:
+        for name, match, _ in duplicates:
             print(f"  {name} → {match['id']} (score {match['score']})")
         tmp_dir = ROOT / "data" / "tmp"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         pending = [
             {
                 "pdf_name": name,
-                "text_file": f"data/text/{Path(name).stem}.txt",
+                "text_preview": preview,
                 "match": match,
             }
-            for name, match in duplicates
+            for name, match, preview in duplicates
         ]
         (tmp_dir / "pending_duplicates.json").write_text(
             json.dumps(pending, indent=2), encoding="utf-8"
