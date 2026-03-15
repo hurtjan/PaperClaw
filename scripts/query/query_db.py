@@ -425,19 +425,24 @@ def cmd_text_file(args, papers):
         sys.exit(1)
 
 
-_PRESTIGE_JOURNALS = [
-    "nature energy", "nature climate change", "nature sustainability",
-    "nature communications", "nature food", "one earth", "joule", "science", "nature",
-    "energy economics", "ecological economics", "global environmental change",
-    "applied energy", "energy policy", "world development", "climate policy",
-    "journal of finance", "review of financial studies", "journal of financial economics",
-    "international review",
-]
-_TOPIC_KEYWORDS = [
-    "strand", "investor", "portfolio", "fossil fuel", "transition risk", "decarboni",
-    "divestment", "carbon", "financial", "ownership", "exposure", "coal", "oil", "gas",
-    "bank", "fund", "pension", "institutional investor", "equity",
-]
+def _load_scoring_config():
+    """Load prestige_journals and topic_keywords from project.yaml (if present)."""
+    try:
+        import yaml
+        config_path = ROOT / "project.yaml"
+        if config_path.exists():
+            with open(config_path) as f:
+                config = yaml.safe_load(f) or {}
+            scoring = config.get("scoring", {})
+            return (
+                scoring.get("prestige_journals", []),
+                scoring.get("topic_keywords", []),
+            )
+    except Exception:
+        pass
+    return [], []
+
+_PRESTIGE_JOURNALS, _TOPIC_KEYWORDS = _load_scoring_config()
 
 
 def _resolve_paper_id(pid, papers):

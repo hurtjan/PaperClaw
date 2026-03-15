@@ -13,8 +13,8 @@ USAGE
 ARGUMENTS
 ---------
   paper_id
-      ID of the owned paper to explore (e.g. semieniuk_2022_stranded).
-      Partial match is supported: 'semieniuk_2022' will match if unique.
+      ID of the owned paper to explore (e.g. smith_2020_networks).
+      Partial match is supported: 'smith_2020' will match if unique.
 
 OPTIONS
 -------
@@ -62,25 +62,25 @@ OPTIONS
 EXAMPLES
 --------
   # Overview of all citations (normal detail)
-  python3 scripts/query/cite_explorer.py semieniuk_2022_stranded
+  python3 scripts/query/cite_explorer.py smith_2020_networks
 
   # Full detail for a specific paper
-  python3 scripts/query/cite_explorer.py semieniuk_2022_stranded --detail full
+  python3 scripts/query/cite_explorer.py smith_2020_networks --detail full
 
   # Only methodology and data_source citations, with quotes
-  python3 scripts/query/cite_explorer.py baer_2022_trisk --purpose methodology data_source --detail full
+  python3 scripts/query/cite_explorer.py chen_2021_analysis --purpose methodology data_source --detail full
 
-  # Search for carbon mentions across all citation contexts
-  python3 scripts/query/cite_explorer.py monasterolo_2020_climate --search carbon --detail full
+  # Search for mentions across all citation contexts
+  python3 scripts/query/cite_explorer.py patel_2019_framework --search resilience --detail full
 
   # Just the IDs of contrasting citations
-  python3 scripts/query/cite_explorer.py semieniuk_2022_stranded --purpose contrasting_evidence --detail minimal
+  python3 scripts/query/cite_explorer.py smith_2020_networks --purpose contrasting_evidence --detail minimal
 
   # Top 5 most-cited works in a paper
-  python3 scripts/query/cite_explorer.py way_2022_empirically --sort appearances --limit 5 --detail full
+  python3 scripts/query/cite_explorer.py kim_2022_empirical --sort appearances --limit 5 --detail full
 
   # All citations as JSON
-  python3 scripts/query/cite_explorer.py pichler_2026_five --json
+  python3 scripts/query/cite_explorer.py garcia_2023_review --json
 """
 
 import argparse
