@@ -83,67 +83,25 @@ Uses the first discovered test subdir.
    cp pdf-staging/<first_test_dir>/*.pdf pdf-staging/
    ```
 
-6. **Run ingest:** `.venv/bin/python3 scripts/ingest/ingest.py`
-   Parse output to identify which text files were created in `data/text/` — these give you the paper IDs (stem of the filename).
+6. **Run ingest** via the Skill tool:
+   > Use the Skill tool to invoke `ingest` with args `--force --passes 1 2 3 4`.
 
-7. **Extract all papers in parallel.** For each paper ID discovered, run these steps in order:
-   - **Pass 1:** Run `paper-extractor` agent with prompt (substitute the paper ID for `{id}`):
-     ```
-     Extract metadata and references from: data/text/{id}.txt
-     ```
-     Creates `data/extractions/{id}.json`. If no DONE line → retry with `paper-extractor-large`.
-   - **Refs sidecar** (Bash):
-     ```bash
-     .venv/bin/python3 -c "import json; d=json.load(open('data/extractions/{id}.json')); json.dump([{'id':c['id'],'title':c.get('title',''),'authors':c.get('authors',''),'year':c.get('year','')} for c in d['citations']], open('data/extractions/{id}.refs.json','w'), indent=2)"
-     ```
-   - **Pass 2:** Run `paper-extractor-contexts` agent with prompt:
-     ```
-     Extract citation contexts from: data/text/{id}.txt
-     Refs file: data/extractions/{id}.refs.json
-     Paper ID: {id}
-     Write output to: data/extractions/{id}.contexts.json
-     ```
-     If no DONE line → retry with `paper-extractor-contexts-large` using the **same prompt**.
-   - **Merge:** `.venv/bin/python3 scripts/ingest/merge_extraction.py {id}`
-   - **Pass 3:** Run `paper-extractor-analysis` agent with prompt:
-     ```
-     Analyze paper: data/text/{id}.txt
-     Paper ID: {id}
-     Extraction JSON: data/extractions/{id}.json
-     ```
-     If no DONE line, log a warning and continue.
-   - **Pass 4:** Run `paper-extractor-sections` agent with prompt:
-     ```
-     Extract sections from: data/text/{id}.txt
-     Paper ID: {id}
-     Extraction JSON: data/extractions/{id}.json
-     ```
-     If no DONE line, log a warning and continue.
+   **Note:** `/ingest` has a query-context guard that warns if `/query` was previously run in this context. During Phase B (after Phase A queries), this guard may trigger. If it does, dismiss it and proceed — the test environment is isolated.
 
-8. **Link papers sequentially.** For each paper ID (one at a time):
-   - `.venv/bin/python3 scripts/link/link_paper.py data/extractions/<id>.json`
-   - Run `cross-reference-linker` agent
+7. **Identify new paper IDs** by diffing `data/text/` against the pre-existing files recorded in SETUP step 3. The stems of new `.txt` files are the paper IDs for query validation.
 
-9. **Rebuild index and DB:**
-   ```bash
-   .venv/bin/python3 scripts/build/build_index.py
-   ```
-   ```bash
-   .venv/bin/python3 scripts/build/check_db.py
-   ```
-   Verify exit code 0 — **FAIL Phase A** if non-zero.
+8. **Verify results:**
+   - Confirm `data/extractions/<id>.json` exists for each new paper ID
+   - Run `.venv/bin/python3 scripts/build/check_db.py` — **FAIL Phase A** if exit code non-zero
+   - Run `.venv/bin/python3 scripts/query/duckdb_query.py rebuild`
 
-   ```bash
-   .venv/bin/python3 scripts/query/duckdb_query.py rebuild
-   ```
-
-10. **Run Phase A queries** (record pass/fail per query):
+9. **Run Phase A queries** (record pass/fail per query):
     - `duckdb_query.py stats`
     - `duckdb_query.py owned` (expect count matching number of PDFs ingested from first test dir)
     - `duckdb_query.py top-cited 5`
     - Pick a keyword from one of the ingested paper titles and run: `duckdb_query.py search "<keyword>" --limit 5`
 
-11. **Save Phase A snapshot:**
+10. **Save Phase A snapshot:**
     ```bash
     mkdir -p data/tmp/_test_phase_a
     cp data/db/papers.json data/tmp/_test_phase_a/
@@ -158,32 +116,24 @@ Track the cumulative count of owned papers so far (= number of PDFs from first t
 
 Uses the second discovered test subdir. **Skip this phase if only one test subdir exists.**
 
-12. **Copy** all PDFs from the second test subdir to `pdf-staging/`:
+11. **Copy** all PDFs from the second test subdir to `pdf-staging/`:
     ```bash
     cp pdf-staging/<second_test_dir>/*.pdf pdf-staging/
     ```
 
-13. **Run ingest:** `.venv/bin/python3 scripts/ingest/ingest.py`
-    Parse output for new paper IDs.
+12. **Run ingest** via the Skill tool:
+    > Use the Skill tool to invoke `ingest` with args `--force --passes 1 2 3 4`.
 
-14. **Extract all new papers in parallel** (same Pass 1–4 + merge flow as Phase A step 7).
+    If the query-context guard triggers (because Phase A ran queries), dismiss it and proceed.
 
-15. **Link papers sequentially** (same as Phase A step 8 — use `data/extractions/<id>.json` not bare ID).
+13. **Identify new paper IDs** by diffing `data/text/` against the pre-Phase-B state (files present after Phase A). The stems of newly added `.txt` files are the Phase B paper IDs.
 
-16. **Rebuild index and DB:**
-    ```bash
-    .venv/bin/python3 scripts/build/build_index.py
-    ```
-    ```bash
-    .venv/bin/python3 scripts/build/check_db.py
-    ```
-    Verify exit code 0 — **FAIL Phase B** if non-zero.
+14. **Verify results:**
+    - Confirm `data/extractions/<id>.json` exists for each new paper ID
+    - Run `.venv/bin/python3 scripts/build/check_db.py` — **FAIL Phase B** if exit code non-zero
+    - Run `.venv/bin/python3 scripts/query/duckdb_query.py rebuild`
 
-    ```bash
-    .venv/bin/python3 scripts/query/duckdb_query.py rebuild
-    ```
-
-17. **Run Phase B queries** (record pass/fail per query). Use real paper IDs discovered during extraction:
+15. **Run Phase B queries** (record pass/fail per query). Use real paper IDs discovered during extraction:
     - `duckdb_query.py stats` (expect total owned = sum of PDFs from all test dirs so far)
     - `duckdb_query.py owned` (all test papers)
     - `duckdb_query.py top-cited 5`
@@ -195,22 +145,22 @@ Uses the second discovered test subdir. **Skip this phase if only one test subdi
 
 ## PHASE C — DB Merge Test
 
-18. **Create merge source:**
+16. **Create merge source:**
     ```bash
     mkdir -p data/tmp/_test_merge_src/data/db
     cp data/db/papers.json data/tmp/_test_merge_src/data/db/
     cp data/db/contexts.json data/tmp/_test_merge_src/data/db/
     ```
 
-19. **Reset DB to empty** — re-run the Bash commands from SETUP step 4 to reset DB files to empty.
+17. **Reset DB to empty** — re-run the Bash commands from SETUP step 4 to reset DB files to empty.
 
-20. **Run merge:**
+18. **Run merge:**
     ```bash
     .venv/bin/python3 scripts/enrich/merge_db.py data/tmp/_test_merge_src --name test_corpus
     ```
     Verify output shows added entries — **FAIL Phase C** if merge reports 0 papers added.
 
-21. **Check DB and rebuild:**
+19. **Check DB and rebuild:**
     ```bash
     .venv/bin/python3 scripts/build/check_db.py
     ```
@@ -220,7 +170,7 @@ Uses the second discovered test subdir. **Skip this phase if only one test subdi
     .venv/bin/python3 scripts/query/duckdb_query.py rebuild
     ```
 
-22. **Run Phase C queries:**
+20. **Run Phase C queries:**
     - `duckdb_query.py stats` (papers should appear as external_owned)
     - `duckdb_query.py owned`
     - Pick a keyword from any ingested paper title and run: `duckdb_query.py search "<keyword>" --limit 5`
@@ -229,43 +179,43 @@ Uses the second discovered test subdir. **Skip this phase if only one test subdi
 
 ## PHASE D — Change Tracking
 
-23. **Verify manifest exists and has entries** (written during Phases A–C):
+21. **Verify manifest exists and has entries** (written during Phases A–C):
     ```bash
     wc -l data/db_history/manifest.jsonl
     ```
     **FAIL Phase D** if file is missing or has 0 lines.
 
-24. **Verify patch files exist:**
+22. **Verify patch files exist:**
     ```bash
     ls data/db_history/patches/*.json 2>/dev/null | wc -l
     ```
     **FAIL Phase D** if count is 0.
 
-25. **Display history:**
+23. **Display history:**
     ```bash
     .venv/bin/python3 scripts/build/rollback.py
     ```
     Record the number of entries shown.
 
-26. **Preview rollback (dry run):**
+24. **Preview rollback (dry run):**
     ```bash
     .venv/bin/python3 scripts/build/rollback.py --dry-run --last 1
     ```
     Verify output describes a change without modifying files.
 
-27. **Apply rollback:**
+25. **Apply rollback:**
     ```bash
     .venv/bin/python3 scripts/build/rollback.py --last 1
     ```
     **FAIL Phase D** if non-zero exit or error output.
 
-28. **Confirm entry count decreased:**
+26. **Confirm entry count decreased:**
     ```bash
     .venv/bin/python3 scripts/build/rollback.py
     ```
-    Verify entry count is one less than recorded in step 25 — **FAIL Phase D** if not.
+    Verify entry count is one less than recorded in step 23 — **FAIL Phase D** if not.
 
-29. **Re-apply the undone change** (restores contexts.json):
+27. **Re-apply the undone change** (restores contexts.json):
     ```bash
     .venv/bin/python3 scripts/build/build_index.py
     ```
@@ -274,7 +224,7 @@ Uses the second discovered test subdir. **Skip this phase if only one test subdi
 
 ## PHASE E — Duplicate Detection & Merge
 
-30. **Inject synthetic duplicate.** Run this Python snippet via Bash to add a `_v2` stub to the current test DB:
+28. **Inject synthetic duplicate.** Run this Python snippet via Bash to add a `_v2` stub to the current test DB:
     ```bash
     .venv/bin/python3 - <<'PYEOF'
 import json
@@ -315,13 +265,13 @@ PYEOF
     ```
     Capture `stub_id` (the original stub) and `v2_id` (its injected duplicate) from the output. **FAIL Phase E** if exit code non-zero.
 
-31. **Run detection:**
+29. **Run detection:**
     ```bash
     .venv/bin/python3 scripts/build/find_duplicates.py --json
     ```
     Read `data/tmp/duplicate_candidates.json`. **FAIL Phase E** if `groups_found == 0` or if the injected pair (`stub_id` + `v2_id`) is not present in any group's paper list.
 
-32. **Write merge plan** — write `data/tmp/duplicate_merge_plan.json` using Bash:
+30. **Write merge plan** — write `data/tmp/duplicate_merge_plan.json` using Bash:
     ```bash
     .venv/bin/python3 - <<'PYEOF'
 import json
@@ -348,32 +298,32 @@ PYEOF
     ```
     **FAIL Phase E** if exit code non-zero.
 
-33. **Dry-run merge:**
+31. **Dry-run merge:**
     ```bash
     .venv/bin/python3 scripts/build/merge_duplicates.py --dry-run
     ```
     Verify output describes the expected merge (shows enrich/edges/refs summary). **FAIL Phase E** if exit code non-zero.
 
-34. **Actual merge:**
+32. **Actual merge:**
     ```bash
     .venv/bin/python3 scripts/build/merge_duplicates.py
     ```
     **FAIL Phase E** if exit code non-zero.
 
-35. **Validate:**
+33. **Validate:**
     ```bash
     .venv/bin/python3 scripts/build/check_db.py
     ```
     **FAIL Phase E** if exit code non-zero.
     Verify by reading `papers.json`: the `_v2` stub now has `superseded_by` pointing to the canonical, and the canonical has `_v2` in its `aliases`.
 
-36. **Rollback the merge:**
+34. **Rollback the merge:**
     ```bash
     .venv/bin/python3 scripts/build/rollback.py --last 1
     ```
     **FAIL Phase E** if exit code non-zero. Run `check_db.py` again to confirm DB is clean after rollback.
 
-37. **Run unit tests:**
+35. **Run unit tests:**
     ```bash
     .venv/bin/python3 scripts/build/test_find_duplicates.py
     .venv/bin/python3 scripts/build/test_merge_duplicates.py
@@ -384,19 +334,19 @@ PYEOF
 
 ## CLEANUP
 
-38. **Remove temp working dirs** (keep backup intact):
+36. **Remove temp working dirs** (keep backup intact):
     ```bash
     rm -rf data/tmp/_test_phase_a data/tmp/_test_merge_src 2>/dev/null || true
     ```
 
-39. **Restore db_history state** (remove test patches, restore real manifest):
+37. **Restore db_history state** (remove test patches, restore real manifest):
     ```bash
     rm -f data/db_history/patches/test_*.json 2>/dev/null || true
     ls data/db_history/patches/*.json 2>/dev/null | while read f; do rm -f "$f"; done || true
     cp data/tmp/_test_backup/manifest.jsonl data/db_history/manifest.jsonl 2>/dev/null || true
     ```
 
-40. **Report backup location.** Tell the user:
+38. **Report backup location.** Tell the user:
     - Test DB is now live in `data/db/`
     - Original DB backup is at `data/tmp/_test_backup/`
     - To restore: say "restore my DB" or "recreate the db"
@@ -431,12 +381,6 @@ Fill in actual subdir names, counts, and any relevant error details for FAIL row
 
 ## Agents Used
 
-| Agent | Model | Parallel? | Purpose |
-|---|---|---|---|
-| `paper-extractor` | Haiku | yes | Pass 1: metadata + refs |
-| `paper-extractor-large` | Sonnet | yes | Pass 1 fallback |
-| `paper-extractor-contexts` | Haiku | yes | Pass 2: citation contexts |
-| `paper-extractor-contexts-large` | Sonnet | last resort | Pass 2 fallback |
-| `paper-extractor-analysis` | Haiku | yes | Pass 3: methodology, claims, topics |
-| `paper-extractor-sections` | Haiku | yes | Pass 4: section headings, summaries, annotated text |
-| `cross-reference-linker` | Haiku | **no** | Full incremental linking pipeline |
+Extraction and linking agents are invoked by `/ingest` — see `/ingest` for the full agent table.
+
+`/test` itself does not invoke any agents directly.
