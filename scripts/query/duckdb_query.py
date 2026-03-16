@@ -274,13 +274,14 @@ def build_db(con, force=False):
         )
 
         con.execute("DROP TABLE IF EXISTS citation_edges")
-        con.execute("CREATE TABLE citation_edges (citing_id VARCHAR, cited_id VARCHAR)")
+        con.execute("CREATE TABLE citation_edges (citing_id VARCHAR, cited_id VARCHAR, cited_title VARCHAR)")
         cites_data = [(pid, p.get("cites", [])) for pid, p in papers_data.items() if p.get("cites")]
         if cites_data:
             con.execute("CREATE TEMP TABLE _cites_tmp (citing_id VARCHAR, cited_ids VARCHAR[])")
             con.executemany("INSERT INTO _cites_tmp VALUES (?,?)", cites_data)
-            con.execute("INSERT INTO citation_edges SELECT citing_id, UNNEST(cited_ids) FROM _cites_tmp")
+            con.execute("INSERT INTO citation_edges (citing_id, cited_id) SELECT citing_id, UNNEST(cited_ids) FROM _cites_tmp")
             con.execute("DROP TABLE _cites_tmp")
+            con.execute("UPDATE citation_edges SET cited_title = p.title FROM papers p WHERE citation_edges.cited_id = p.paper_id")
         con.execute("CREATE INDEX idx_ce_citing ON citation_edges(citing_id)")
         con.execute("CREATE INDEX idx_ce_cited ON citation_edges(cited_id)")
 

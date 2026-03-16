@@ -32,7 +32,7 @@ Their query or topic: $ARGUMENTS
 - `sections` (paper_id, heading, summary, annotated_text)
 - `methodology` (paper_id PK, type, model_name, approach, temporal_scope, geographic_scope, unit_of_analysis, scenarios)
 - `data_sources` (paper_id, name, type, description) · `questions` (paper_id, question)
-- `citation_edges` (citing_id, cited_id) — complete citation graph from cites arrays; covers all edges, not just those with extracted contexts
+- `citation_edges` (citing_id, cited_id, cited_title) — complete citation graph from cites arrays; covers all edges, not just those with extracted contexts
 - `authors` (author_id PK, canonical_name, type, name_variants, paper_count INT, owned_paper_count INT) · `paper_authors` (paper_id, author_id)
 
 Key commands:
