@@ -19,5 +19,4 @@ project:
   description: Literature database and citation graph
   name: PaperClaw
 user:
-  name: hurt_jan
   onboarded_at: '2026-03-15'
