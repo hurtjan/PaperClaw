@@ -16,7 +16,8 @@ claude
 ```
 
 Drop your PDFs in, run `/ingest`, and PaperClaw extracts structured data from each one of them.
-After that, you can query your library:
+After that, you can query your library.
+To save on Claude Code usage, you can even import other people's libraries and merge them with your own.
 
 ### Example queries
 
