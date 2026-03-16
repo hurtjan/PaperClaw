@@ -63,15 +63,17 @@ def main():
         sys.exit(1)
 
     paper = papers[paper_id]
-    if paper.get("type") != "external_owned":
-        print(f"ERROR: '{paper_id}' is type '{paper.get('type')}', expected 'external_owned'",
+    if paper.get("type") not in ("external_owned", "stub"):
+        print(f"ERROR: '{paper_id}' is type '{paper.get('type')}', expected 'external_owned' or 'stub'",
               file=sys.stderr)
         sys.exit(1)
 
-    source_db = paper.get("source_db", "?")
     title = paper.get("title", paper_id)
     print(f"Adopting: {title}")
-    print(f"  Source DB: {source_db}")
+    if paper.get("type") == "external_owned":
+        print(f"  Source DB: {paper.get('source_db', '?')}")
+    else:
+        print(f"  (promoting stub → owned)")
 
     # Find PDF
     pdf_path = find_pdf(paper_id, title)
@@ -91,6 +93,7 @@ def main():
     print(f"  Text: data/text/{text_path.name}")
 
     # Promote entry
+    src_type = paper.get("type", "external_owned")
     paper["type"] = "owned"
     paper["pdf_file"] = f"data/pdfs/{pdf_path.name}"
     paper["text_file"] = f"data/text/{text_path.name}"
@@ -104,7 +107,7 @@ def main():
     db["metadata"]["stub_count"] = stub_count
 
     export_json(db, PAPERS_FILE,
-                description=f"adopted {paper_id} from external_owned to owned")
+                description=f"adopted {paper_id} from {src_type} to owned")
     print(f"\nPromoted '{paper_id}' → owned")
 
     print(f"\nNext steps:")

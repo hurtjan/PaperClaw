@@ -9,8 +9,9 @@ Extraction files are NOT imported.
 Usage:
   .venv/bin/python3 scripts/enrich/merge_db.py <source_dir>
   .venv/bin/python3 scripts/enrich/merge_db.py <source_dir> --name <label>
-  .venv/bin/python3 scripts/enrich/merge_db.py <source_dir> --force   # overwrite existing external_owned
-  .venv/bin/python3 scripts/enrich/merge_db.py <source_dir> --enrich  # enrich local with external metadata
+  .venv/bin/python3 scripts/enrich/merge_db.py <source_dir> --force    # overwrite existing external_owned
+  .venv/bin/python3 scripts/enrich/merge_db.py <source_dir> --enrich   # enrich local with external metadata
+  .venv/bin/python3 scripts/enrich/merge_db.py <source_dir> --resolved data/tmp/merge_resolved.txt
 """
 
 import argparse
@@ -61,6 +62,51 @@ def _enrich_fields(local: dict, external: dict):
         local_val = local.get(f)
         if local_val is None or local_val == "" or local_val == []:
             local[f] = ext_val
+
+
+def _parse_resolved(path: Path) -> dict:
+    """Parse merge_resolved.txt → {ext_id: local_id | None}. None means 'new'."""
+    remap = {}
+    for line in path.read_text().splitlines():
+        line = line.split("#")[0].strip()
+        if not line or line.startswith("FROM_SOURCE:"):
+            continue
+        parts = [p.strip() for p in line.split(",", 1)]
+        if len(parts) != 2:
+            continue
+        ext_id, decision = parts[0], parts[1]
+        if not ext_id:
+            continue
+        remap[ext_id] = None if decision == "new" else decision
+    return remap
+
+
+def _apply_id_remap(source_papers: dict, remap: dict) -> tuple:
+    """
+    Separate fuzzy-matched papers from source_papers and rewrite cross-refs.
+
+    Returns (remaining_source_papers, matched_papers_dict).
+    - matched_papers: ext_id → paper, for entries where remap value is not None
+    - remaining: all others (including 'new' decisions), with cites/cited_by rewritten
+    """
+    ref_remap = {k: v for k, v in remap.items() if v is not None}
+
+    remaining = {}
+    matched = {}
+    for pid, paper in source_papers.items():
+        if pid in ref_remap:
+            matched[pid] = paper
+        else:
+            remaining[pid] = paper
+
+    # Rewrite cross-references in remaining papers so they point to local IDs
+    for paper in remaining.values():
+        if "cites" in paper:
+            paper["cites"] = [ref_remap.get(c, c) for c in paper["cites"]]
+        if "cited_by" in paper:
+            paper["cited_by"] = [ref_remap.get(c, c) for c in paper["cited_by"]]
+
+    return remaining, matched
 
 
 def _merge_paper_enrich(local_papers, pid, local_entry, ext_entry, name):
@@ -219,6 +265,8 @@ def main():
     parser.add_argument("--force", action="store_true", help="Overwrite existing external_owned entries")
     parser.add_argument("--enrich", action="store_true",
                         help="Enrich local papers with external metadata where local is missing")
+    parser.add_argument("--resolved", metavar="PATH",
+                        help="Path to merge_resolved.txt from merge-resolver agent")
     args = parser.parse_args()
 
     source = Path(args.source_dir).resolve()
@@ -256,6 +304,53 @@ def main():
     skipped = 0
     updated = 0
     enriched = 0
+    merged_fuzzy = 0
+
+    # Apply fuzzy-match resolutions from merge-resolver agent (if provided)
+    if args.resolved:
+        resolved_path = Path(args.resolved)
+        if not resolved_path.exists():
+            print(f"ERROR: resolved file not found: {resolved_path}", file=sys.stderr)
+            sys.exit(1)
+
+        id_remap = _parse_resolved(resolved_path)
+        ref_remap = {k: v for k, v in id_remap.items() if v is not None}
+        print(f"Resolved decisions: {len(id_remap)} ({len(ref_remap)} matches, "
+              f"{len(id_remap) - len(ref_remap)} new)")
+
+        source_papers, matched_papers = _apply_id_remap(source_papers, id_remap)
+
+        # Enrichment pass: merge matched external papers into their local counterparts
+        for ext_id, local_id in id_remap.items():
+            if local_id is None:
+                continue
+            ext_paper = matched_papers.get(ext_id)
+            if ext_paper is None:
+                continue
+
+            local_entry = local_papers.get(local_id)
+            if local_entry is None:
+                print(f"  WARNING: MERGE target {local_id} not found in local DB "
+                      f"— adding {ext_id} as external_owned")
+                clean = _strip_fields(ext_paper)
+                entry = {k: v for k, v in clean.items()
+                         if k not in ("pdf_file", "text_file", "extraction_file")}
+                entry["type"] = "external_owned"
+                entry["source_db"] = name
+                local_papers[ext_id] = entry
+                added_owned += 1
+                continue
+
+            _enrich_fields(local_entry, _strip_fields(ext_paper))
+
+            # Rewrite cites/cited_by in ext_paper before unioning
+            ext_cites = [ref_remap.get(c, c) for c in ext_paper.get("cites", [])]
+            ext_cited_by = [ref_remap.get(c, c) for c in ext_paper.get("cited_by", [])]
+            local_entry["cites"] = _union_list(local_entry.get("cites", []), ext_cites)
+            local_entry["cited_by"] = _union_list(local_entry.get("cited_by", []), ext_cited_by)
+
+            print(f"  MERGED: {ext_id} → {local_id}")
+            merged_fuzzy += 1
 
     for pid, paper in source_papers.items():
         ptype = paper.get("type", "")
@@ -328,6 +423,8 @@ def main():
                 description=f"merge {name}: {added_owned} added, {updated} updated, {enriched} enriched")
     print(f"\nMerge results:")
     print(f"  Added external_owned: {added_owned}")
+    if merged_fuzzy:
+        print(f"  Fuzzy-merged:         {merged_fuzzy}")
     if updated:
         print(f"  Updated:              {updated}")
     if enriched:
@@ -353,17 +450,6 @@ def main():
     if ctx_source.exists():
         print("\nMerging contexts...")
         _merge_contexts(ctx_source)
-
-    # Rebuild authors
-    result = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "build" / "build_authors.py")],
-        cwd=ROOT, capture_output=True, text=True
-    )
-    if result.returncode == 0:
-        print(result.stdout.strip())
-    else:
-        print(f"ERROR in build_authors.py: {result.stderr.strip()}", file=sys.stderr)
-
 
 
 if __name__ == "__main__":

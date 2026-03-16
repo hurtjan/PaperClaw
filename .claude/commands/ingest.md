@@ -25,7 +25,7 @@ Arguments: $ARGUMENTS
 1. Run `.venv/bin/python3 scripts/ingest/check_new_pdfs.py` to check for unprocessed PDFs in storage (PDFs in `data/pdfs/` lacking extracted text in `data/text/`).
 2. Run `.venv/bin/python3 scripts/ingest/ingest.py` — extracts text, checks duplicates, moves accepted PDFs to `data/pdfs/`.
 3. If ingest reports potential duplicates, run the `duplicate-checker` agent — it reads `data/tmp/pending_duplicates.json` and tells the user whether each is a true duplicate.
-4. If ingest reports **EXTERNAL MATCH** lines, run `.venv/bin/python3 scripts/ingest/adopt_import.py <paper_id>` for each — this promotes the `external_owned` entry to `owned` and wires up the local PDF/text paths. The paper is then ready for normal extraction in Phase 2.
+4. If ingest reports **EXTERNAL MATCH** or **STUB MATCH** lines, run `.venv/bin/python3 scripts/ingest/adopt_import.py <paper_id>` for each — this promotes the `external_owned` or `stub` entry to `owned` and wires up the local PDF/text paths. The paper is then ready for normal extraction in Phase 2.
 
 **Paths:** `pdf-staging/` (input), `data/pdfs/` (accepted), `data/text/` (extracted text), `data/tmp/pending_duplicates.json`
 

@@ -106,7 +106,11 @@ def check_duplicate(metadata: dict, papers: dict) -> dict | None:
                 "score": s,
                 "signals": sigs,
                 "similarity": round(sim, 3),
-                "match_type": "external" if paper.get("type") == "external_owned" else "local",
+                "match_type": (
+                    "external" if paper.get("type") == "external_owned"
+                    else "stub" if paper.get("type") == "stub"
+                    else "local"
+                ),
             }
 
     if best_match and best_match["score"] >= 2:
@@ -174,6 +178,14 @@ def main():
                     print(f"    Source DB: {match.get('source_db', '?')}")
                     print(f"    Paper ID:  {match['id']}")
                     print(f"  → PDF accepted for adoption. After ingest completes, run:")
+                    print(f"      .venv/bin/python3 scripts/ingest/adopt_import.py {match['id']}")
+                    external_match = match
+                    # Fall through to normal accept flow
+                elif match["match_type"] == "stub":
+                    new_title = metadata.get("title", pdf_path.stem)
+                    print(f"  STUB MATCH: {match['title'][:80]}")
+                    print(f"    Paper ID:  {match['id']}")
+                    print(f"  → PDF accepted for stub promotion. After ingest completes, run:")
                     print(f"      .venv/bin/python3 scripts/ingest/adopt_import.py {match['id']}")
                     external_match = match
                     # Fall through to normal accept flow
