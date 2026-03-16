@@ -1,8 +1,21 @@
 # PaperClaw
 
-Academic papers are trapped in PDFs. You can read them one at a time, but you can't search across their reference lists, trace citation chains, or ask "which papers cite X as methodology?" without manually reading everything. PaperClaw fixes this.
+Transforming your pdf-paper-library into a cross-referenced, queryable database.
 
-It transforms a collection of academic PDFs into a cross-referenced, queryable citation graph — complete with full-text search, citation contexts, author entities, and network analysis. The system runs inside [Claude Code](https://docs.anthropic.com/en/docs/claude-code): AI agents handle comprehension (reading papers, generating IDs, making match decisions) while Python scripts handle mechanics (scoring, indexing, assembly).
+**Did this happen to you?**
+You start reading one paper. It cites five interesting ones. Each of those cites five more. Before you know it you have 50 browser tabs and no idea which papers are actually relevant, which ones you've already read, or which key sources are still missing.
+
+Then you try pasting them into a chatbot — and hit the context window after paper four.
+
+**PaperClaw fixes this.** It runs inside [Claude Code](https://docs.anthropic.com/en/docs/claude-code), so no additional subscriptions are needed beyond Claude Code itself.
+
+Drop your PDFs in, run `/ingest`, and PaperClaw extracts structured data from each one — citations, the context in which each citation is used, summaries, claims, methodology notes — then fuzzy-matches everything across sources to build a unified citation graph of your entire library. You can then query it with natural language: trace citation chains, find all papers using a specific method, identify which papers are most central to your topic, or just ask a question about your literature.
+
+```
+What methodologies are used to measure urban heat islands?
+/query which papers cite Smith 2019 as contrasting evidence?
+/query find the most cited papers in my collection on transfer learning
+```
 
 ## Setup
 

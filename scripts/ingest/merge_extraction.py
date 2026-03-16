@@ -186,6 +186,37 @@ def merge(paper_id: str):
         print(f"  Pass 1 IDs ({len(p1_ids)}): {p1_ids[:5]}{'...' if len(p1_ids) > 5 else ''}", file=sys.stderr)
         print(f"  Pass 2 IDs ({len(p2_ids)}): {p2_ids[:5]}{'...' if len(p2_ids) > 5 else ''}", file=sys.stderr)
 
+        # Fuzzy fallback: map ref_N IDs → Pass 1 IDs via citation_key
+        # Handles numbered references where agent still generated ref_1, ref_2, etc.
+        import re
+        key_to_p1_id = {}
+        for cit in extraction.get('citations', []):
+            ck = cit.get('citation_key', '')
+            cid = cit.get('id', '')
+            if ck and cid:
+                key_to_p1_id[str(ck)] = cid
+
+        if key_to_p1_id:
+            remapped = 0
+            for p2_id in list(contexts_by_id.keys()):
+                m = re.fullmatch(r'ref_(\d+)', p2_id)
+                if m:
+                    p1_id = key_to_p1_id.get(m.group(1))
+                    if p1_id:
+                        contexts_by_id.setdefault(p1_id, []).extend(contexts_by_id.pop(p2_id))
+                        remapped += 1
+            if remapped:
+                print(f"  Fuzzy fallback remapped {remapped} ref_N entries via citation_key", file=sys.stderr)
+                # Re-apply contexts after remapping
+                context_count = 0
+                for citation in extraction.get('citations', []):
+                    cid = citation.get('id')
+                    citation['contexts'] = contexts_by_id.get(cid, [])
+                    context_count += len(citation['contexts'])
+                has_contexts = context_count > 0
+                if context_count > 0:
+                    print(f"  Fuzzy fallback succeeded: matched {context_count} contexts", file=sys.stderr)
+
     analysis_data, analysis_path = load_analysis(base_dir, paper_id)
     if analysis_data:
         for key in ('research_questions', 'methodology', 'claims', 'keywords', 'topics'):

@@ -15,6 +15,8 @@ You extract **citation contexts** from a paper's text. You are given:
 ## Your Task
 
 1. Read the text file and the refs file. If the refs file does not exist, read citation IDs from the `citations` array in `data/extractions/{paper_id}.json` instead.
+   - **Use the exact `id` values from the refs file in your output. Never invent IDs like `ref_1`, `ref_2`, etc.**
+   - If the paper uses numbered references (e.g. `[1]`, `[2]`), match them to refs entries using the `citation_key` field (e.g. `"citation_key": "1"` maps `[1]` to that entry's `id`).
 2. For each citation that appears in the text:
    - Identify the **section** where it appears
    - Determine the **purpose** (one of: `background`, `motivation`, `methodology`, `data_source`, `supporting_evidence`, `contrasting_evidence`, `comparison`, `extension`, `tool_software`)

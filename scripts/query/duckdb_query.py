@@ -115,6 +115,8 @@ All commands support partial paper_id matching.
 
 import argparse
 import json
+import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -142,341 +144,400 @@ def _load_fts(con):
         con.execute("LOAD fts;")
         return True
     except Exception:
-        try:
-            con.execute("INSTALL fts; LOAD fts;")
-            return True
-        except Exception:
-            return False
+        pass
+    try:
+        con.execute("INSTALL fts;")
+        con.execute("LOAD fts;")
+        print("  FTS extension installed and loaded.")
+        return True
+    except Exception as e:
+        print(f"  WARNING: Could not install/load FTS extension: {e}")
+        return False
 
 
-def build_db(con):
-    """Load all JSON data into DuckDB tables."""
-    t0 = time.time()
+def _stat_key(path):
+    """Return (mtime_ns, size) for a file, or (0, 0) if missing."""
+    try:
+        st = os.stat(path)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (0, 0)
 
-    # -- Papers table --
-    papers_data = json.loads(PAPERS_FILE.read_text())["papers"]
-    paper_rows = []
-    for pid, p in papers_data.items():
-        raw_year = p.get("year")
-        if isinstance(raw_year, str):
-            # Extract first 4-digit number from strings like "2005-2019" or "2018"
-            import re
-            m = re.search(r'\d{4}', raw_year)
-            year = int(m.group()) if m else None
-        elif isinstance(raw_year, (int, float)):
-            year = int(raw_year)
-        else:
-            year = None
-        raw_authors = p.get("authors", "")
-        if isinstance(raw_authors, list):
-            authors_str = "; ".join(str(a) for a in raw_authors)
-        else:
-            authors_str = str(raw_authors) if raw_authors else ""
-        paper_rows.append({
-            "paper_id": pid,
-            "type": p.get("type", ""),
-            "title": p.get("title", ""),
-            "authors": authors_str,
-            "year": year,
-            "journal": p.get("journal", ""),
-            "doi": p.get("doi", ""),
-            "abstract": p.get("abstract", ""),
-            "pdf_file": p.get("pdf_file", ""),
-            "text_file": p.get("text_file", ""),
-        })
 
-    con.execute("DROP TABLE IF EXISTS papers")
-    con.execute("""
-        CREATE TABLE papers (
-            paper_id VARCHAR PRIMARY KEY,
-            type VARCHAR,
-            title VARCHAR,
-            authors VARCHAR,
-            year INTEGER,
-            journal VARCHAR,
-            doi VARCHAR,
-            abstract VARCHAR,
-            pdf_file VARCHAR,
-            text_file VARCHAR
-        )
-    """)
-    con.executemany(
-        "INSERT INTO papers VALUES (?,?,?,?,?,?,?,?,?,?)",
-        [(r["paper_id"], r["type"], r["title"], r["authors"], r["year"],
-          r["journal"], r["doi"], r["abstract"], r["pdf_file"], r["text_file"])
-         for r in paper_rows]
+def _extractions_stat():
+    """Return (max_mtime_ns, file_count) across all extraction JSON files."""
+    if not EXTRACTIONS_DIR.exists():
+        return (0, 0)
+    files = [
+        f for f in EXTRACTIONS_DIR.glob("*.json")
+        if not any(p in f.stem for p in (".refs", ".contexts", ".sections", ".analysis"))
+    ]
+    if not files:
+        return (0, 0)
+    return (max(os.stat(f).st_mtime_ns for f in files), len(files))
+
+
+def _read_build_meta(con):
+    """Read stored (mtime_ns, size) from _build_meta. Returns dict source->(mtime_ns, size)."""
+    try:
+        rows = con.execute("SELECT source, mtime_ns, size FROM _build_meta").fetchall()
+        return {r[0]: (r[1], r[2]) for r in rows}
+    except Exception:
+        return {}
+
+
+def _upsert_build_meta(con, source, mtime_ns, size):
+    """Upsert mtime/size into _build_meta."""
+    con.execute(
+        "INSERT OR REPLACE INTO _build_meta (source, mtime_ns, size) VALUES (?, ?, ?)",
+        [source, mtime_ns, size],
     )
 
-    # -- Citation edges (complete graph from cites arrays) --
-    con.execute("DROP TABLE IF EXISTS citation_edges")
-    con.execute("CREATE TABLE citation_edges (citing_id VARCHAR, cited_id VARCHAR)")
-    cites_data = [(pid, p.get("cites", [])) for pid, p in papers_data.items() if p.get("cites")]
-    if cites_data:
-        con.execute("CREATE TEMP TABLE _cites_tmp (citing_id VARCHAR, cited_ids VARCHAR[])")
-        con.executemany("INSERT INTO _cites_tmp VALUES (?,?)", cites_data)
-        con.execute("INSERT INTO citation_edges SELECT citing_id, UNNEST(cited_ids) FROM _cites_tmp")
-        con.execute("DROP TABLE _cites_tmp")
-    con.execute("CREATE INDEX idx_ce_citing ON citation_edges(citing_id)")
-    con.execute("CREATE INDEX idx_ce_cited ON citation_edges(cited_id)")
 
-    # -- Citation contexts from contexts.json --
-    index_data = json.loads(INDEX_FILE.read_text())
-    context_rows = []
-    for cited_id, entries in index_data.get("by_cited", {}).items():
-        for e in entries:
-            context_rows.append((
-                e.get("citing", ""),
-                e.get("cited", cited_id),
-                e.get("cited_title", ""),
-                e.get("purpose", ""),
-                e.get("section", ""),
-                e.get("quote", ""),
-                e.get("explanation", ""),
-            ))
+def build_db(con, force=False):
+    """Load all JSON data into DuckDB tables, skipping groups whose source hasn't changed."""
+    t0 = time.time()
 
-    con.execute("DROP TABLE IF EXISTS contexts")
+    # Ensure _build_meta tracking table exists
     con.execute("""
-        CREATE TABLE contexts (
-            citing_id VARCHAR,
-            cited_id VARCHAR,
-            cited_title VARCHAR,
-            purpose VARCHAR,
-            section VARCHAR,
-            quote VARCHAR,
-            explanation VARCHAR
+        CREATE TABLE IF NOT EXISTS _build_meta (
+            source VARCHAR PRIMARY KEY,
+            mtime_ns BIGINT,
+            size BIGINT
         )
     """)
-    if context_rows:
+
+    stored = {} if force else _read_build_meta(con)
+
+    # Track which groups rebuilt (drives FTS rebuild decisions)
+    rebuilt = {"papers": False, "contexts": False, "extractions": False, "authors": False}
+
+    # ── Group A: papers.json → papers, citation_edges ────────────────────────
+    papers_stat = _stat_key(PAPERS_FILE)
+    if not force and stored.get("papers.json") == papers_stat:
+        print("  papers.json unchanged, skipping Group A")
+        paper_count = con.execute("SELECT COUNT(*) FROM papers").fetchone()[0]
+        owned_count = con.execute(
+            "SELECT COUNT(*) FROM papers WHERE type IN ('owned','external_owned')"
+        ).fetchone()[0]
+    else:
+        rebuilt["papers"] = True
+        papers_data = json.loads(PAPERS_FILE.read_text())["papers"]
+        paper_rows = []
+        for pid, p in papers_data.items():
+            raw_year = p.get("year")
+            if isinstance(raw_year, str):
+                m = re.search(r'\d{4}', raw_year)
+                year = int(m.group()) if m else None
+            elif isinstance(raw_year, (int, float)):
+                year = int(raw_year)
+            else:
+                year = None
+            raw_authors = p.get("authors", "")
+            if isinstance(raw_authors, list):
+                authors_str = "; ".join(str(a) for a in raw_authors)
+            else:
+                authors_str = str(raw_authors) if raw_authors else ""
+            paper_rows.append({
+                "paper_id": pid,
+                "type": p.get("type", ""),
+                "title": p.get("title", ""),
+                "authors": authors_str,
+                "year": year,
+                "journal": p.get("journal", ""),
+                "doi": p.get("doi", ""),
+                "abstract": p.get("abstract", ""),
+                "pdf_file": p.get("pdf_file", ""),
+                "text_file": p.get("text_file", ""),
+            })
+
+        con.execute("DROP TABLE IF EXISTS papers")
+        con.execute("""
+            CREATE TABLE papers (
+                paper_id VARCHAR PRIMARY KEY,
+                type VARCHAR,
+                title VARCHAR,
+                authors VARCHAR,
+                year INTEGER,
+                journal VARCHAR,
+                doi VARCHAR,
+                abstract VARCHAR,
+                pdf_file VARCHAR,
+                text_file VARCHAR
+            )
+        """)
         con.executemany(
-            "INSERT INTO contexts VALUES (?,?,?,?,?,?,?)", context_rows
+            "INSERT INTO papers VALUES (?,?,?,?,?,?,?,?,?,?)",
+            [(r["paper_id"], r["type"], r["title"], r["authors"], r["year"],
+              r["journal"], r["doi"], r["abstract"], r["pdf_file"], r["text_file"])
+             for r in paper_rows]
         )
 
-    # -- Citation counts --
-    con.execute("DROP TABLE IF EXISTS citation_counts")
-    con.execute("CREATE TABLE citation_counts (paper_id VARCHAR PRIMARY KEY, cited_by_count INTEGER)")
-    cc = index_data.get("citation_counts", {})
-    if cc:
-        con.executemany(
-            "INSERT INTO citation_counts VALUES (?,?)",
-            list(cc.items())
-        )
+        con.execute("DROP TABLE IF EXISTS citation_edges")
+        con.execute("CREATE TABLE citation_edges (citing_id VARCHAR, cited_id VARCHAR)")
+        cites_data = [(pid, p.get("cites", [])) for pid, p in papers_data.items() if p.get("cites")]
+        if cites_data:
+            con.execute("CREATE TEMP TABLE _cites_tmp (citing_id VARCHAR, cited_ids VARCHAR[])")
+            con.executemany("INSERT INTO _cites_tmp VALUES (?,?)", cites_data)
+            con.execute("INSERT INTO citation_edges SELECT citing_id, UNNEST(cited_ids) FROM _cites_tmp")
+            con.execute("DROP TABLE _cites_tmp")
+        con.execute("CREATE INDEX idx_ce_citing ON citation_edges(citing_id)")
+        con.execute("CREATE INDEX idx_ce_cited ON citation_edges(cited_id)")
 
-    # -- Extraction-level tables (claims, keywords, topics, sections, methodology, questions) --
-    claim_rows = []
-    keyword_rows = []
-    topic_rows = []
-    section_rows = []
-    methodology_rows = []
-    question_rows = []
-    datasource_rows = []
+        paper_count = len(paper_rows)
+        owned_count = sum(1 for r in paper_rows if r["type"] in ("owned", "external_owned"))
+        _upsert_build_meta(con, "papers.json", *papers_stat)
 
-    for f in sorted(EXTRACTIONS_DIR.glob("*.json")):
-        if any(part in f.stem for part in (".refs", ".contexts", ".sections", ".analysis")):
-            continue
-        try:
-            data = json.loads(f.read_text())
-            if not isinstance(data, dict):
+    # ── Group B: contexts.json → contexts, citation_counts ───────────────────
+    contexts_stat = _stat_key(INDEX_FILE)
+    if not force and stored.get("contexts.json") == contexts_stat:
+        print("  contexts.json unchanged, skipping Group B")
+        context_count = con.execute("SELECT COUNT(*) FROM contexts").fetchone()[0]
+    else:
+        rebuilt["contexts"] = True
+        index_data = json.loads(INDEX_FILE.read_text())
+        context_rows = []
+        for cited_id, entries in index_data.get("by_cited", {}).items():
+            for e in entries:
+                context_rows.append((
+                    e.get("citing", ""),
+                    e.get("cited", cited_id),
+                    e.get("cited_title", ""),
+                    e.get("purpose", ""),
+                    e.get("section", ""),
+                    e.get("quote", ""),
+                    e.get("explanation", ""),
+                ))
+
+        con.execute("DROP TABLE IF EXISTS contexts")
+        con.execute("""
+            CREATE TABLE contexts (
+                citing_id VARCHAR,
+                cited_id VARCHAR,
+                cited_title VARCHAR,
+                purpose VARCHAR,
+                section VARCHAR,
+                quote VARCHAR,
+                explanation VARCHAR
+            )
+        """)
+        if context_rows:
+            con.executemany("INSERT INTO contexts VALUES (?,?,?,?,?,?,?)", context_rows)
+
+        con.execute("DROP TABLE IF EXISTS citation_counts")
+        con.execute("CREATE TABLE citation_counts (paper_id VARCHAR PRIMARY KEY, cited_by_count INTEGER)")
+        cc = index_data.get("citation_counts", {})
+        if cc:
+            con.executemany("INSERT INTO citation_counts VALUES (?,?)", list(cc.items()))
+
+        con.execute("CREATE INDEX IF NOT EXISTS idx_contexts_cited ON contexts(cited_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_contexts_citing ON contexts(citing_id)")
+
+        context_count = len(context_rows)
+        _upsert_build_meta(con, "contexts.json", *contexts_stat)
+
+    # ── Group C: extractions/*.json → claims, keywords, topics, etc. ─────────
+    ext_stat = _extractions_stat()
+    if not force and stored.get("extractions") == ext_stat:
+        print("  extractions unchanged, skipping Group C")
+        claim_count = con.execute("SELECT COUNT(*) FROM claims").fetchone()[0]
+        keyword_count = con.execute("SELECT COUNT(*) FROM keywords").fetchone()[0]
+        topic_count = con.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
+        section_count = con.execute("SELECT COUNT(*) FROM sections").fetchone()[0]
+    else:
+        rebuilt["extractions"] = True
+        claim_rows, keyword_rows, topic_rows, section_rows = [], [], [], []
+        methodology_rows, question_rows, datasource_rows = [], [], []
+
+        for f in sorted(EXTRACTIONS_DIR.glob("*.json")):
+            if any(part in f.stem for part in (".refs", ".contexts", ".sections", ".analysis")):
                 continue
-        except Exception:
-            continue
+            try:
+                data = json.loads(f.read_text())
+                if not isinstance(data, dict):
+                    continue
+            except Exception:
+                continue
 
-        pid = f.stem
+            pid = f.stem
 
-        # Claims
-        for c in data.get("claims", []) or []:
-            claim_rows.append((
-                pid,
-                c.get("claim", ""),
-                c.get("type", ""),
-                c.get("confidence", ""),
-                c.get("evidence_basis", ""),
-                c.get("quantification", ""),
-                json.dumps(c.get("supporting_citations", [])),
-            ))
+            for c in data.get("claims", []) or []:
+                claim_rows.append((
+                    pid, c.get("claim", ""), c.get("type", ""), c.get("confidence", ""),
+                    c.get("evidence_basis", ""), c.get("quantification", ""),
+                    json.dumps(c.get("supporting_citations", [])),
+                ))
+            for kw in data.get("keywords", []) or []:
+                keyword_rows.append((pid, str(kw)))
+            topics = data.get("topics") or {}
+            if isinstance(topics, dict):
+                for field in ("themes", "geographic_focus", "sectors", "policy_context"):
+                    for val in topics.get(field, []) or []:
+                        topic_rows.append((pid, field, str(val)))
+            for s in data.get("sections", []) or []:
+                section_rows.append((
+                    pid, s.get("heading", ""), s.get("summary", ""), s.get("annotated_text", ""),
+                ))
+            meth = data.get("methodology") or {}
+            if isinstance(meth, dict) and meth:
+                methodology_rows.append((
+                    pid, meth.get("type", ""), meth.get("model_name", ""),
+                    meth.get("approach", ""), meth.get("temporal_scope", ""),
+                    json.dumps(meth.get("geographic_scope", "")),
+                    meth.get("unit_of_analysis", ""), json.dumps(meth.get("scenarios", "")),
+                ))
+                for ds in meth.get("data_sources", []) or []:
+                    if isinstance(ds, dict):
+                        datasource_rows.append((pid, ds.get("name", ""), ds.get("type", ""), ds.get("description", "")))
+                    else:
+                        datasource_rows.append((pid, str(ds), "", ""))
+            for q in data.get("research_questions", []) or []:
+                question_rows.append((pid, str(q)))
 
-        # Keywords
-        for kw in data.get("keywords", []) or []:
-            keyword_rows.append((pid, str(kw)))
+        con.execute("DROP TABLE IF EXISTS claims")
+        con.execute("""
+            CREATE TABLE claims (
+                paper_id VARCHAR, claim VARCHAR, type VARCHAR,
+                confidence VARCHAR, evidence_basis VARCHAR,
+                quantification VARCHAR, supporting_citations VARCHAR
+            )
+        """)
+        if claim_rows:
+            con.executemany("INSERT INTO claims VALUES (?,?,?,?,?,?,?)", claim_rows)
 
-        # Topics
-        topics = data.get("topics") or {}
-        if isinstance(topics, dict):
-            for field in ("themes", "geographic_focus", "sectors", "policy_context"):
-                for val in topics.get(field, []) or []:
-                    topic_rows.append((pid, field, str(val)))
+        con.execute("DROP TABLE IF EXISTS keywords")
+        con.execute("CREATE TABLE keywords (paper_id VARCHAR, keyword VARCHAR)")
+        if keyword_rows:
+            con.executemany("INSERT INTO keywords VALUES (?,?)", keyword_rows)
 
-        # Sections
-        for s in data.get("sections", []) or []:
-            section_rows.append((
-                pid,
-                s.get("heading", ""),
-                s.get("summary", ""),
-                s.get("annotated_text", ""),
-            ))
+        con.execute("DROP TABLE IF EXISTS topics")
+        con.execute("CREATE TABLE topics (paper_id VARCHAR, field VARCHAR, value VARCHAR)")
+        if topic_rows:
+            con.executemany("INSERT INTO topics VALUES (?,?,?)", topic_rows)
 
-        # Methodology
-        meth = data.get("methodology") or {}
-        if isinstance(meth, dict) and meth:
-            methodology_rows.append((
-                pid,
-                meth.get("type", ""),
-                meth.get("model_name", ""),
-                meth.get("approach", ""),
-                meth.get("temporal_scope", ""),
-                json.dumps(meth.get("geographic_scope", "")),
-                meth.get("unit_of_analysis", ""),
-                json.dumps(meth.get("scenarios", "")),
-            ))
-            for ds in meth.get("data_sources", []) or []:
-                if isinstance(ds, dict):
-                    datasource_rows.append((pid, ds.get("name", ""), ds.get("type", ""), ds.get("description", "")))
-                else:
-                    datasource_rows.append((pid, str(ds), "", ""))
+        con.execute("DROP TABLE IF EXISTS sections")
+        con.execute("CREATE TABLE sections (paper_id VARCHAR, heading VARCHAR, summary VARCHAR, annotated_text VARCHAR)")
+        if section_rows:
+            con.executemany("INSERT INTO sections VALUES (?,?,?,?)", section_rows)
 
-        # Research questions
-        for q in data.get("research_questions", []) or []:
-            question_rows.append((pid, str(q)))
+        con.execute("DROP TABLE IF EXISTS methodology")
+        con.execute("""
+            CREATE TABLE methodology (
+                paper_id VARCHAR PRIMARY KEY, type VARCHAR, model_name VARCHAR,
+                approach VARCHAR, temporal_scope VARCHAR, geographic_scope VARCHAR,
+                unit_of_analysis VARCHAR, scenarios VARCHAR
+            )
+        """)
+        if methodology_rows:
+            con.executemany("INSERT INTO methodology VALUES (?,?,?,?,?,?,?,?)", methodology_rows)
 
-    con.execute("DROP TABLE IF EXISTS claims")
-    con.execute("""
-        CREATE TABLE claims (
-            paper_id VARCHAR, claim VARCHAR, type VARCHAR,
-            confidence VARCHAR, evidence_basis VARCHAR,
-            quantification VARCHAR, supporting_citations VARCHAR
-        )
-    """)
-    if claim_rows:
-        con.executemany("INSERT INTO claims VALUES (?,?,?,?,?,?,?)", claim_rows)
+        con.execute("DROP TABLE IF EXISTS data_sources")
+        con.execute("CREATE TABLE data_sources (paper_id VARCHAR, name VARCHAR, type VARCHAR, description VARCHAR)")
+        if datasource_rows:
+            con.executemany("INSERT INTO data_sources VALUES (?,?,?,?)", datasource_rows)
 
-    con.execute("DROP TABLE IF EXISTS keywords")
-    con.execute("CREATE TABLE keywords (paper_id VARCHAR, keyword VARCHAR)")
-    if keyword_rows:
-        con.executemany("INSERT INTO keywords VALUES (?,?)", keyword_rows)
+        con.execute("DROP TABLE IF EXISTS questions")
+        con.execute("CREATE TABLE questions (paper_id VARCHAR, question VARCHAR)")
+        if question_rows:
+            con.executemany("INSERT INTO questions VALUES (?,?)", question_rows)
 
-    con.execute("DROP TABLE IF EXISTS topics")
-    con.execute("CREATE TABLE topics (paper_id VARCHAR, field VARCHAR, value VARCHAR)")
-    if topic_rows:
-        con.executemany("INSERT INTO topics VALUES (?,?,?)", topic_rows)
+        claim_count = len(claim_rows)
+        keyword_count = len(keyword_rows)
+        topic_count = len(topic_rows)
+        section_count = len(section_rows)
+        _upsert_build_meta(con, "extractions", *ext_stat)
 
-    con.execute("DROP TABLE IF EXISTS sections")
-    con.execute("CREATE TABLE sections (paper_id VARCHAR, heading VARCHAR, summary VARCHAR, annotated_text VARCHAR)")
-    if section_rows:
-        con.executemany("INSERT INTO sections VALUES (?,?,?,?)", section_rows)
+    # ── Group D: authors.json → authors, paper_authors ───────────────────────
+    authors_stat = _stat_key(AUTHORS_FILE)
+    if not force and stored.get("authors.json") == authors_stat:
+        print("  authors.json unchanged, skipping Group D")
+        author_count = con.execute("SELECT COUNT(*) FROM authors").fetchone()[0]
+        paper_author_count = con.execute("SELECT COUNT(*) FROM paper_authors").fetchone()[0]
+    else:
+        rebuilt["authors"] = True
+        author_rows, paper_author_rows = [], []
 
-    con.execute("DROP TABLE IF EXISTS methodology")
-    con.execute("""
-        CREATE TABLE methodology (
-            paper_id VARCHAR PRIMARY KEY, type VARCHAR, model_name VARCHAR,
-            approach VARCHAR, temporal_scope VARCHAR, geographic_scope VARCHAR,
-            unit_of_analysis VARCHAR, scenarios VARCHAR
-        )
-    """)
-    if methodology_rows:
-        con.executemany("INSERT INTO methodology VALUES (?,?,?,?,?,?,?,?)", methodology_rows)
+        if AUTHORS_FILE.exists():
+            authors_data = json.loads(AUTHORS_FILE.read_text())
+            for aid, a in authors_data.get("persons", {}).items():
+                variants = "|".join(a.get("name_variants", []))
+                author_rows.append((
+                    a.get("id", aid), a.get("canonical_name", ""), "person",
+                    variants, a.get("paper_count", 0), a.get("owned_paper_count", 0),
+                ))
+                for pid in a.get("papers", []):
+                    paper_author_rows.append((pid, a.get("id", aid)))
+            for iid, inst in authors_data.get("institutions", {}).items():
+                author_rows.append((
+                    inst.get("id", iid), inst.get("name", ""), "institution",
+                    inst.get("name", ""), inst.get("paper_count", 0), 0,
+                ))
+                for pid in inst.get("papers", []):
+                    paper_author_rows.append((pid, inst.get("id", iid)))
 
-    con.execute("DROP TABLE IF EXISTS data_sources")
-    con.execute("CREATE TABLE data_sources (paper_id VARCHAR, name VARCHAR, type VARCHAR, description VARCHAR)")
-    if datasource_rows:
-        con.executemany("INSERT INTO data_sources VALUES (?,?,?,?)", datasource_rows)
+        con.execute("DROP TABLE IF EXISTS paper_authors")
+        con.execute("DROP TABLE IF EXISTS authors")
+        con.execute("""
+            CREATE TABLE authors (
+                author_id VARCHAR PRIMARY KEY,
+                canonical_name VARCHAR,
+                type VARCHAR,
+                name_variants VARCHAR,
+                paper_count INTEGER,
+                owned_paper_count INTEGER
+            )
+        """)
+        if author_rows:
+            con.executemany("INSERT INTO authors VALUES (?,?,?,?,?,?)", author_rows)
+        con.execute("CREATE TABLE paper_authors (paper_id VARCHAR, author_id VARCHAR)")
+        if paper_author_rows:
+            con.executemany("INSERT INTO paper_authors VALUES (?,?)", paper_author_rows)
+        con.execute("CREATE INDEX IF NOT EXISTS idx_paper_authors_pid ON paper_authors(paper_id)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_paper_authors_aid ON paper_authors(author_id)")
 
-    con.execute("DROP TABLE IF EXISTS questions")
-    con.execute("CREATE TABLE questions (paper_id VARCHAR, question VARCHAR)")
-    if question_rows:
-        con.executemany("INSERT INTO questions VALUES (?,?)", question_rows)
+        author_count = len(author_rows)
+        paper_author_count = len(paper_author_rows)
+        _upsert_build_meta(con, "authors.json", *authors_stat)
 
-    # -- FTS indexes (optional — requires fts extension) --
+    # ── FTS indexes (only rebuild for changed groups) ─────────────────────────
     global HAS_FTS
     fts_ok = _load_fts(con)
     HAS_FTS = fts_ok
     if fts_ok:
-        con.execute("PRAGMA create_fts_index('papers', 'paper_id', 'title', 'abstract', 'authors', overwrite=1)")
-        con.execute("PRAGMA create_fts_index('contexts', 'rowid', 'quote', 'explanation', 'cited_title', overwrite=1)")
-        if claim_rows:
-            con.execute("PRAGMA create_fts_index('claims', 'rowid', 'claim', 'quantification', overwrite=1)")
-        if section_rows:
-            con.execute("PRAGMA create_fts_index('sections', 'rowid', 'heading', 'summary', overwrite=1)")
-        if keyword_rows:
-            con.execute("PRAGMA create_fts_index('keywords', 'rowid', 'keyword', overwrite=1)")
-        if topic_rows:
-            con.execute("PRAGMA create_fts_index('topics', 'rowid', 'value', overwrite=1)")
+        if rebuilt["papers"]:
+            con.execute("PRAGMA create_fts_index('papers', 'paper_id', 'title', 'abstract', 'authors', overwrite=1)")
+        if rebuilt["contexts"]:
+            con.execute("PRAGMA create_fts_index('contexts', 'rowid', 'quote', 'explanation', 'cited_title', overwrite=1)")
+        if rebuilt["extractions"]:
+            if claim_rows:
+                con.execute("PRAGMA create_fts_index('claims', 'rowid', 'claim', 'quantification', overwrite=1)")
+            if section_rows:
+                con.execute("PRAGMA create_fts_index('sections', 'rowid', 'heading', 'summary', overwrite=1)")
+            if keyword_rows:
+                con.execute("PRAGMA create_fts_index('keywords', 'rowid', 'keyword', overwrite=1)")
+            if topic_rows:
+                con.execute("PRAGMA create_fts_index('topics', 'rowid', 'value', overwrite=1)")
+        if rebuilt["authors"] and author_rows:
+            con.execute("PRAGMA create_fts_index('authors', 'author_id', 'canonical_name', 'name_variants', overwrite=1)")
     else:
-        print("  WARNING: FTS extension not available. BM25 search disabled.")
-        print("  To enable: run `.venv/bin/python3 -c \"import duckdb; c=duckdb.connect(); c.execute('INSTALL fts')\"` once.")
-
-    # -- ART indexes for citation chain traversal --
-    con.execute("CREATE INDEX IF NOT EXISTS idx_contexts_cited ON contexts(cited_id)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_contexts_citing ON contexts(citing_id)")
-
-    # -- Author entity tables --
-    author_rows = []
-    paper_author_rows = []
-
-    if AUTHORS_FILE.exists():
-        authors_data = json.loads(AUTHORS_FILE.read_text())
-        for aid, a in authors_data.get("persons", {}).items():
-            variants = "|".join(a.get("name_variants", []))
-            author_rows.append((
-                a.get("id", aid),
-                a.get("canonical_name", ""),
-                "person",
-                variants,
-                a.get("paper_count", 0),
-                a.get("owned_paper_count", 0),
-            ))
-            for pid in a.get("papers", []):
-                paper_author_rows.append((pid, a.get("id", aid)))
-        for iid, inst in authors_data.get("institutions", {}).items():
-            author_rows.append((
-                inst.get("id", iid),
-                inst.get("name", ""),
-                "institution",
-                inst.get("name", ""),
-                inst.get("paper_count", 0),
-                0,
-            ))
-            for pid in inst.get("papers", []):
-                paper_author_rows.append((pid, inst.get("id", iid)))
-
-    con.execute("DROP TABLE IF EXISTS paper_authors")
-    con.execute("DROP TABLE IF EXISTS authors")
-    con.execute("""
-        CREATE TABLE authors (
-            author_id VARCHAR PRIMARY KEY,
-            canonical_name VARCHAR,
-            type VARCHAR,
-            name_variants VARCHAR,
-            paper_count INTEGER,
-            owned_paper_count INTEGER
-        )
-    """)
-    if author_rows:
-        con.executemany("INSERT INTO authors VALUES (?,?,?,?,?,?)", author_rows)
-
-    con.execute("""
-        CREATE TABLE paper_authors (
-            paper_id VARCHAR,
-            author_id VARCHAR
-        )
-    """)
-    if paper_author_rows:
-        con.executemany("INSERT INTO paper_authors VALUES (?,?)", paper_author_rows)
-
-    con.execute("CREATE INDEX IF NOT EXISTS idx_paper_authors_pid ON paper_authors(paper_id)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_paper_authors_aid ON paper_authors(author_id)")
-
-    if fts_ok and author_rows:
-        con.execute("PRAGMA create_fts_index('authors', 'author_id', 'canonical_name', 'name_variants', overwrite=1)")
+        if any(rebuilt.values()):
+            print("  WARNING: FTS extension not available. BM25 search disabled.")
+            print("  To enable: run `.venv/bin/python3 -c \"import duckdb; c=duckdb.connect(); c.execute('INSTALL fts')\"` once.")
 
     elapsed = time.time() - t0
-    paper_count = len(paper_rows)
-    owned = sum(1 for r in paper_rows if r["type"] in ("owned", "external_owned"))
-    print(f"Built DuckDB: {paper_count} papers ({owned} owned), "
-          f"{len(context_rows)} contexts, {len(claim_rows)} claims, "
-          f"{len(keyword_rows)} keywords, {len(topic_rows)} topics, "
-          f"{len(section_rows)} sections, "
-          f"{len(author_rows)} authors, {len(paper_author_rows)} paper_author links "
-          f"in {elapsed:.2f}s")
-    print(f"Saved to: {DB_FILE}")
+    changed_groups = [k for k, v in rebuilt.items() if v]
+    if not changed_groups:
+        print(f"DuckDB up-to-date (all groups unchanged) in {elapsed:.2f}s")
+    else:
+        print(
+            f"Built DuckDB: {paper_count} papers ({owned_count} owned), "
+            f"{context_count} contexts, {claim_count} claims, "
+            f"{keyword_count} keywords, {topic_count} topics, "
+            f"{section_count} sections, "
+            f"{author_count} authors, {paper_author_count} paper_author links "
+            f"in {elapsed:.2f}s"
+        )
+        print(f"Saved to: {DB_FILE}")
 
 
 HAS_FTS = False
@@ -493,7 +554,15 @@ def get_connection():
     if needs_build:
         build_db(con)
     else:
-        HAS_FTS = _load_fts(con)
+        # Existing DB: check if _build_meta is present (old DB pre-incremental rebuild)
+        has_meta = con.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '_build_meta'"
+        ).fetchone()[0]
+        if not has_meta:
+            print("  Old DB detected (no _build_meta), running full rebuild...")
+            build_db(con, force=True)
+        else:
+            HAS_FTS = _load_fts(con)
     return con
 
 
@@ -566,7 +635,7 @@ def wrap(text, prefix="    ", width=100):
 
 
 def cmd_rebuild(args, con):
-    build_db(con)
+    build_db(con, force=True)
 
 
 def cmd_paper(args, con):
@@ -1719,41 +1788,40 @@ def _compute_pagerank_db(con, n, damping=0.85, max_iter=100, tol=1e-6, top_k=15,
         # For global PR, v[v] = 1/N for all — fold into a constant
         teleport_const = (dangling_mass + 1.0 - damping) / n  # global only
 
+        con.execute("CREATE OR REPLACE TEMP TABLE _pr_old AS SELECT * FROM _pr_scores")
+
         if personalized:
             # teleport = (dangling_mass + 1-d) * v[v], varies per paper
             teleport_factor = dangling_mass + 1.0 - damping
             con.execute(f"""
-                CREATE TEMP TABLE _pr_new AS
+                CREATE OR REPLACE TEMP TABLE _pr_scores AS
                 SELECT p.paper_id,
                        {teleport_factor} * pv.v
                        + {damping} * COALESCE(SUM(s.score / od.out_deg), 0.0) AS score
                 FROM papers p
                 JOIN _pr_v pv ON pv.paper_id = p.paper_id
                 LEFT JOIN _pr_adj a  ON a.cited_id  = p.paper_id
-                LEFT JOIN _pr_scores s  ON s.paper_id  = a.citing_id
+                LEFT JOIN _pr_old s  ON s.paper_id  = a.citing_id
                 LEFT JOIN _pr_out_deg od ON od.citing_id = a.citing_id
                 GROUP BY p.paper_id, pv.v
             """)
         else:
             con.execute(f"""
-                CREATE TEMP TABLE _pr_new AS
+                CREATE OR REPLACE TEMP TABLE _pr_scores AS
                 SELECT p.paper_id,
                        {teleport_const}
                        + {damping} * COALESCE(SUM(s.score / od.out_deg), 0.0) AS score
                 FROM papers p
                 LEFT JOIN _pr_adj a  ON a.cited_id  = p.paper_id
-                LEFT JOIN _pr_scores s  ON s.paper_id  = a.citing_id
+                LEFT JOIN _pr_old s  ON s.paper_id  = a.citing_id
                 LEFT JOIN _pr_out_deg od ON od.citing_id = a.citing_id
                 GROUP BY p.paper_id
             """)
 
         l1 = float(con.execute("""
             SELECT SUM(ABS(n.score - o.score))
-            FROM _pr_new n JOIN _pr_scores o ON n.paper_id = o.paper_id
+            FROM _pr_scores n JOIN _pr_old o ON n.paper_id = o.paper_id
         """).fetchone()[0] or 0.0)
-
-        con.execute("DROP TABLE _pr_scores")
-        con.execute("ALTER TABLE _pr_new RENAME TO _pr_scores")
 
         cur_top = frozenset(
             r[0] for r in con.execute(
@@ -1817,25 +1885,23 @@ def _compute_katz_db(con, n, alpha=None, beta=1.0, max_iter=100, tol=1e-6, top_k
     stable = 0
 
     for it in range(max_iter):
+        con.execute("CREATE OR REPLACE TEMP TABLE _pr_old AS SELECT * FROM _pr_scores")
         con.execute(f"""
-            CREATE TEMP TABLE _pr_new AS
+            CREATE OR REPLACE TEMP TABLE _pr_scores AS
             SELECT p.paper_id,
                    CAST(b.bias AS DOUBLE)
                    + {alpha} * CAST(COALESCE(SUM(s.score), 0.0) AS DOUBLE) AS score
             FROM papers p
             JOIN _pr_bias b ON b.paper_id = p.paper_id
             LEFT JOIN _pr_adj a ON a.cited_id = p.paper_id
-            LEFT JOIN _pr_scores s ON s.paper_id = a.citing_id
+            LEFT JOIN _pr_old s ON s.paper_id = a.citing_id
             GROUP BY p.paper_id, b.bias
         """)
 
         l1 = float(con.execute("""
             SELECT SUM(ABS(n.score - o.score))
-            FROM _pr_new n JOIN _pr_scores o ON n.paper_id = o.paper_id
+            FROM _pr_scores n JOIN _pr_old o ON n.paper_id = o.paper_id
         """).fetchone()[0] or 0.0)
-
-        con.execute("DROP TABLE _pr_scores")
-        con.execute("ALTER TABLE _pr_new RENAME TO _pr_scores")
 
         cur_top = frozenset(
             r[0] for r in con.execute(

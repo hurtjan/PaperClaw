@@ -224,44 +224,9 @@ Uses the second discovered test subdir. **Skip this phase if only one test subdi
 
 ## PHASE E — Duplicate Detection & Merge
 
-28. **Inject synthetic duplicate.** Run this Python snippet via Bash to add a `_v2` stub to the current test DB:
+28. **Inject synthetic duplicate.** Run:
     ```bash
-    .venv/bin/python3 - <<'PYEOF'
-import json
-from pathlib import Path
-db = json.loads(Path("data/db/papers.json").read_text())
-papers = db["papers"]
-stub = next(
-    (p for p in papers.values()
-     if p.get("type") == "stub" and p.get("cited_by") and p.get("authors")),
-    None
-)
-if not stub:
-    print("ERROR: no suitable stub found for injection")
-    raise SystemExit(1)
-v2_id = stub["id"] + "_v2"
-v2 = {
-    "id": v2_id,
-    "type": "stub",
-    "title": "Working paper: " + (stub.get("title") or ""),
-    "authors": list(stub.get("authors", [])),
-    "year": (stub.get("year") or 2020) - 1,
-    "doi": None,
-    "abstract": None,
-    "cites": [],
-    "cited_by": stub["cited_by"][:1],
-}
-papers[v2_id] = v2
-# update the shared citer to also point at v2
-for citing_id in v2["cited_by"]:
-    if citing_id in papers and v2_id not in papers[citing_id].get("cites", []):
-        papers[citing_id].setdefault("cites", []).append(v2_id)
-db["metadata"]["stub_count"] = sum(1 for p in papers.values() if p["type"] == "stub")
-Path("data/db/papers.json").write_text(
-    json.dumps(db, indent=2, ensure_ascii=False, sort_keys=True)
-)
-print(f"Injected: {stub['id']} + {v2_id}")
-PYEOF
+    .venv/bin/python3 scripts/test/inject_fixture.py
     ```
     Capture `stub_id` (the original stub) and `v2_id` (its injected duplicate) from the output. **FAIL Phase E** if exit code non-zero.
 
@@ -271,30 +236,9 @@ PYEOF
     ```
     Read `data/tmp/duplicate_candidates.json`. **FAIL Phase E** if `groups_found == 0` or if the injected pair (`stub_id` + `v2_id`) is not present in any group's paper list.
 
-30. **Write merge plan** — write `data/tmp/duplicate_merge_plan.json` using Bash:
+30. **Write merge plan** — write `data/tmp/duplicate_merge_plan.json`:
     ```bash
-    .venv/bin/python3 - <<'PYEOF'
-import json
-from pathlib import Path
-candidates = json.loads(Path("data/tmp/duplicate_candidates.json").read_text())
-# Find group containing the _v2 stub
-target_group = None
-for g in candidates["groups"]:
-    ids = [p["id"] for p in g["papers"]]
-    v2s = [pid for pid in ids if pid.endswith("_v2")]
-    if v2s:
-        v2_id = v2s[0]
-        canonical_id = g["recommended_canonical"]
-        alias_ids = [pid for pid in ids if pid != canonical_id]
-        target_group = {"canonical_id": canonical_id, "alias_ids": alias_ids}
-        break
-if not target_group:
-    print("ERROR: could not find injected pair in candidate groups")
-    raise SystemExit(1)
-plan = {"merges": [target_group]}
-Path("data/tmp/duplicate_merge_plan.json").write_text(json.dumps(plan, indent=2))
-print(f"Merge plan: {target_group['canonical_id']} <- {target_group['alias_ids']}")
-PYEOF
+    .venv/bin/python3 scripts/test/write_merge_plan.py
     ```
     **FAIL Phase E** if exit code non-zero.
 

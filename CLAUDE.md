@@ -2,7 +2,7 @@
 
 ## Project
 
-Literature database system that transforms academic PDFs into a cross-referenced, queryable citation graph. All DB writes are tracked via JSON Patch deltas for history and rollback. Agents handle comprehension (ID generation, parsing, matching). Python handles mechanics (scoring, indexing, assembly).
+Literature database system that transforms your paper-library into a cross-referenced, queryable citation graph. All DB writes are tracked via JSON Patch deltas for history and rollback. Agents handle comprehension (ID generation, parsing, matching). Python handles mechanics (scoring, indexing, assembly).
 
 ## Conventions
 

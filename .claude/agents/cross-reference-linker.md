@@ -22,7 +22,7 @@ You integrate a new paper into the literature database. You will be given an ext
 
 Read `data/tmp/link_candidates.json`. It has three lists:
 
-- **`auto_matched`** (score >= 4): Review these. Override only if wrong.
+- **`auto_matched`** (score > 6): Verify every one. Compare citation title, authors, and year against the candidate. If they match, accept. If anything looks wrong, override to `"new"` and log a warning explaining the mismatch. Do NOT skip any entry — every auto-matched citation must be explicitly confirmed or rejected.
 - **`needs_judgment`** (score 1-3): Decide for each: match (use candidate_id) or `"new"`.
 - **`new_citations`**: No action needed.
 

@@ -1,15 +1,20 @@
 {
   "permissions": {
     "allow": [
-      "Bash(.venv/bin/python3 scripts/ingest/ingest.py --dry-run)",
-      "Bash(.venv/bin/python3 scripts/ingest/ingest.py)",
-      "Bash(.venv/bin/python3 scripts/query/duckdb_query.py *)",
-      "Bash(.venv/bin/python3 scripts/query/corpus.py *)"
+      "Bash(.venv/bin/python3 scripts/ingest/* *)",
+      "Bash(.venv/bin/python3 scripts/link/* *)",
+      "Bash(.venv/bin/python3 scripts/query/* *)",
+      "Bash(.venv/bin/python3 scripts/build/* *)",
+      "Bash(.venv/bin/python3 scripts/enrich/* *)",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install -r requirements.txt)",
+      "Bash(bash scripts/hooks/*)",
+      "Bash(mkdir -p data/*)",
+      "Bash(mkdir -p pdf-staging)"
     ]
   },
   "sandbox": {
-    "enabled": true,
-    "autoAllowBashIfSandboxed": true
+    "enabled": true
   },
   "hooks": {
     "SessionStart": [

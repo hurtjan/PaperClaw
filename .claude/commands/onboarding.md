@@ -25,7 +25,7 @@ Report what was found and what (if anything) was fixed.
 Read `project.yaml` (or note that it doesn't exist yet).
 
 **If no `user:` key exists:**
-- Ask the user for their **name only**. Explain that it is used to tag database change history (JSON Patch deltas) so edits can be attributed and rolled back by author.
+- Ask the user for their **name only** — do NOT ask for research focus, institution, affiliation, or any other profile fields. Explain that their name is used to tag database change history (JSON Patch deltas) so edits can be attributed and rolled back by author.
 - Once they answer, write to `project.yaml` under the `user:` key using this Python snippet (adapt values as needed):
 
 ```python

@@ -91,7 +91,7 @@ Prompt (substitute the paper ID for `{id}`):
 **Step 2 — Generate refs sidecar** (Bash, not an agent)
 
 ```bash
-.venv/bin/python3 -c "import json; d=json.load(open('data/extractions/{id}.json')); json.dump([{'id':c['id'],'title':c.get('title',''),'authors':c.get('authors',''),'year':c.get('year','')} for c in d['citations']], open('data/extractions/{id}.refs.json','w'), indent=2)"
+.venv/bin/python3 scripts/ingest/gen_refs_sidecar.py {id}
 ```
 
 - Reads: `data/extractions/{id}.json`
@@ -112,17 +112,7 @@ Prompt (substitute the paper ID for `{id}`):
 - Writes: `data/extractions/{id}.contexts.json` — **not** `{id}.json`
 - If no DONE line → retry with `paper-extractor-contexts-large` using the **same prompt**
 
-**Step 4 — Merge passes 1+2**
-
-```bash
-.venv/bin/python3 scripts/ingest/merge_extraction.py {id}
-```
-
-- Reads: `{id}.json`, `{id}.contexts.json`, `{id}.refs.json`
-- Writes: `{id}.json` (merged), deletes sidecar files
-- **Must run BEFORE Passes 3/4** (they write in-place to the merged JSON)
-
-**Step 5 — Pass 3: Analysis** (skip if Pass 3 disabled)
+**Step 3b — Pass 3: Analysis** (skip if Pass 3 disabled; runs in parallel with Pass 2)
 
 Agent: `paper-extractor-analysis` (Haiku), no large fallback.
 
@@ -130,13 +120,13 @@ Prompt (substitute the paper ID for `{id}`):
 
     Analyze paper: data/text/{id}.txt
     Paper ID: {id}
-    Extraction JSON: data/extractions/{id}.json
+    Write output to: data/extractions/{id}.analysis.json
 
-- Reads: `data/text/{id}.txt`, `data/extractions/{id}.json`
-- Writes: `data/extractions/{id}.json` (in-place merge)
+- Reads: `data/text/{id}.txt`
+- Writes: `data/extractions/{id}.analysis.json`
 - If no DONE line → log warning and continue
 
-**Step 6 — Pass 4: Sections** (skip if Pass 4 disabled; must wait for Step 5)
+**Step 3c — Pass 4: Sections** (skip if Pass 4 disabled; runs in parallel with Passes 2 and 3)
 
 Agent: `paper-extractor-sections` (Haiku), no large fallback.
 
@@ -144,11 +134,20 @@ Prompt (substitute the paper ID for `{id}`):
 
     Extract sections from: data/text/{id}.txt
     Paper ID: {id}
-    Extraction JSON: data/extractions/{id}.json
+    Write output to: data/extractions/{id}.sections.json
 
-- Reads: `data/text/{id}.txt`, `data/extractions/{id}.json`
-- Writes: `data/extractions/{id}.json` (in-place merge)
+- Reads: `data/text/{id}.txt`
+- Writes: `data/extractions/{id}.sections.json`
 - If no DONE line → log warning and continue
+
+**Step 4 — Final merge: all passes**
+
+```bash
+.venv/bin/python3 scripts/ingest/merge_extraction.py {id}
+```
+
+- Reads: `{id}.json`, `{id}.contexts.json`, `{id}.refs.json`, `{id}.analysis.json` (if present), `{id}.sections.json` (if present)
+- Writes: `{id}.json` (merged), deletes sidecar files
 
 For large papers, run `.venv/bin/python3 scripts/ingest/split_paper.py` to split text before extraction.
 

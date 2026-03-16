@@ -57,7 +57,7 @@ def main():
                 "citation_authors": cit.get("authors", []),
                 "citation_doi": cit.get("doi"),
             })
-        elif candidates[0]["score"] >= 4:
+        elif candidates[0]["score"] > 6:
             top = candidates[0]
             auto_matched.append({
                 "citation_id": cit.get("id", ""),
@@ -113,7 +113,7 @@ def main():
     export_json(output, OUTPUT_FILE)
 
     print(f"\nResults:")
-    print(f"  Auto-matched (score >= 4): {len(auto_matched)}")
+    print(f"  Auto-matched (score > 6): {len(auto_matched)}")
     print(f"  Needs judgment (score 1-3): {len(needs_judgment)}")
     print(f"  New (no candidates): {len(new_citations)}")
     print(f"  Version candidates: {len(version_candidates)}")
