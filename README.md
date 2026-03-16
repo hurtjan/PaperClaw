@@ -1,11 +1,13 @@
 # PaperClaw
 
+> Careful, this is just a weekend project.
+
 Transforming your pdf-paper-library into a cross-referenced, queryable database.
 
 **Did this happen to you?**
 You start reading one paper. It cites five interesting ones. Each of those cites five more. Before you know it you have 50 browser tabs and no idea which papers are actually relevant, which ones you've already read, or which key sources are still missing. Maybe you try pasting them into a chatbot, but you hit the context window after paper four.
 
-**PaperClaw fixes this.** It ingests your PDFs and uses AI agents to extract structured metadata, citations, and context — then fuzzy-matches everything across papers to build a unified citation graph, which you can then query using Claude Code. Think of it as a personal literature database that actually understands how your papers relate to each other. It runs inside [Claude Code](https://docs.anthropic.com/en/docs/claude-code), so no additional subscriptions are needed beyond Claude Code itself.
+**PaperClaw** ingests your PDFs and uses AI agents to extract structured metadata, citations, and context — then fuzzy-matches everything across papers to build a unified citation graph, which you can then query using Claude Code. Think of it as a personal literature database that actually understands how your papers relate to each other. It runs inside Claude Code - no additional subscriptions are needed beyond Claude Code itself.
 
 ## How it works 
 After cloning the repository, you start Claude Code and run `/onboarding` to set up your environment.
