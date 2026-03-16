@@ -74,17 +74,22 @@ If neither `--passes`, the memory file, nor a user prompt response is available,
 
 ### Per-paper extraction recipe
 
-For each accepted text file from Phase 1, run these steps **in order**. The Pass 1 agent generates the paper ID — use it (from the DONE line) for all subsequent steps. Multiple papers can run this recipe **in parallel**.
+For each accepted text file from Phase 1, run these steps **in order**. Track two variables per paper:
+
+- `{text_file}` = the original text file path from Phase 1 (e.g., `data/text/1-s2.0-S0140988326000721-main.txt`)
+- `{id}` = the paper ID from Pass 1's DONE line (e.g., `pichler_2026_five`) — not yet known before Pass 1 completes
+
+Multiple papers can run this recipe **in parallel**.
 
 **Step 1 — Pass 1: Metadata + references** (required)
 
 Agent: `paper-extractor` (Haiku), fallback `paper-extractor-large` (Sonnet).
 
-Prompt (substitute the paper ID for `{id}`):
+Prompt (substitute the original text file path for `{text_file}`; `{id}` is not yet known):
 
-    Extract metadata and references from: data/text/{id}.txt
+    Extract metadata and references from: {text_file}
 
-- Reads: `data/text/{id}.txt`
+- Reads: `{text_file}`
 - Writes: `data/extractions/{id}.json`
 - If no DONE line → retry with `paper-extractor-large`
 
@@ -101,14 +106,14 @@ Prompt (substitute the paper ID for `{id}`):
 
 Agent: `paper-extractor-contexts` (Haiku), fallback `paper-extractor-contexts-large` (Sonnet).
 
-Prompt (substitute the paper ID for `{id}`):
+Prompt (substitute the original text file path for `{text_file}` and the paper ID for `{id}`):
 
-    Extract citation contexts from: data/text/{id}.txt
+    Extract citation contexts from: {text_file}
     Refs file: data/extractions/{id}.refs.json
     Paper ID: {id}
     Write output to: data/extractions/{id}.contexts.json
 
-- Reads: `data/text/{id}.txt`, `data/extractions/{id}.refs.json`
+- Reads: `{text_file}`, `data/extractions/{id}.refs.json`
 - Writes: `data/extractions/{id}.contexts.json` — **not** `{id}.json`
 - If no DONE line → retry with `paper-extractor-contexts-large` using the **same prompt**
 
@@ -116,13 +121,13 @@ Prompt (substitute the paper ID for `{id}`):
 
 Agent: `paper-extractor-analysis` (Haiku), no large fallback.
 
-Prompt (substitute the paper ID for `{id}`):
+Prompt (substitute the original text file path for `{text_file}` and the paper ID for `{id}`):
 
-    Analyze paper: data/text/{id}.txt
+    Analyze paper: {text_file}
     Paper ID: {id}
     Write output to: data/extractions/{id}.analysis.json
 
-- Reads: `data/text/{id}.txt`
+- Reads: `{text_file}`
 - Writes: `data/extractions/{id}.analysis.json`
 - If no DONE line → log warning and continue
 
@@ -130,13 +135,13 @@ Prompt (substitute the paper ID for `{id}`):
 
 Agent: `paper-extractor-sections` (Haiku), no large fallback.
 
-Prompt (substitute the paper ID for `{id}`):
+Prompt (substitute the original text file path for `{text_file}` and the paper ID for `{id}`):
 
-    Extract sections from: data/text/{id}.txt
+    Extract sections from: {text_file}
     Paper ID: {id}
     Write output to: data/extractions/{id}.sections.json
 
-- Reads: `data/text/{id}.txt`
+- Reads: `{text_file}`
 - Writes: `data/extractions/{id}.sections.json`
 - If no DONE line → log warning and continue
 
