@@ -3,35 +3,43 @@
 Transforming your pdf-paper-library into a cross-referenced, queryable database.
 
 **Did this happen to you?**
-You start reading one paper. It cites five interesting ones. Each of those cites five more. Before you know it you have 50 browser tabs and no idea which papers are actually relevant, which ones you've already read, or which key sources are still missing.
+You start reading one paper. It cites five interesting ones. Each of those cites five more. Before you know it you have 50 browser tabs and no idea which papers are actually relevant, which ones you've already read, or which key sources are still missing. Maybe you try pasting them into a chatbot, but you hit the context window after paper four.
 
-Then you try pasting them into a chatbot — and hit the context window after paper four.
+**PaperClaw fixes this.** It ingests your PDFs and uses AI agents to extract structured metadata, citations, and context — then fuzzy-matches everything across papers to build a unified citation graph, which you can then query using Claude Code. Think of it as a personal literature database that actually understands how your papers relate to each other. It runs inside [Claude Code](https://docs.anthropic.com/en/docs/claude-code), so no additional subscriptions are needed beyond Claude Code itself.
 
-**PaperClaw fixes this.** It runs inside [Claude Code](https://docs.anthropic.com/en/docs/claude-code), so no additional subscriptions are needed beyond Claude Code itself.
-
-Drop your PDFs in, run `/ingest`, and PaperClaw extracts structured data from each one — citations, the context in which each citation is used, summaries, claims, methodology notes — then fuzzy-matches everything across sources to build a unified citation graph of your entire library. You can then query it with natural language: trace citation chains, find all papers using a specific method, identify which papers are most central to your topic, or just ask a question about your literature.
-
-```
-What methodologies are used to measure urban heat islands?
-/query which papers cite Smith 2019 as contrasting evidence?
-/query find the most cited papers in my collection on transfer learning
-```
-
-## Setup
-
+## How it works 
+After cloning the repository, you start Claude Code and run `/onboarding` to set up your environment.
 ```bash
 git clone <repo-url> PaperClaw
 cd PaperClaw
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python3 scripts/build/install_fts.py
+claude
 ```
 
-## Quick start
+Drop your PDFs in, run `/ingest`, and PaperClaw extracts structured data from each one of them.
+After that, you can query your library:
 
-1. Drop PDFs into `pdf-staging/`
-2. Run `/ingest` in Claude Code
-3. Run `/query <your question>` to search your literature
+### Example queries
+
+**Cross-corpus analysis**
+- "Which papers discuss [topic], and what methodologies do they use?"
+- "What are the main claims about [topic] across my literature? Do any contradict each other?"
+- "Compare the data sources used by papers on [topic] — which datasets come up most often?"
+
+**Citation graph intelligence**
+- "Which references appear in the bibliographies of at least 3 different papers? Those are the foundational works."
+- "What do (Author A, Year) and (Author B, Year) both cite? What do those shared references tell us about their common theoretical basis?"
+- "Which papers cite (Author, Year) as contrasting evidence vs. supporting evidence?"
+
+**Gap discovery**
+- "Which papers are most heavily referenced but don't have PDFs in the corpus yet? Those are the ones I should read next."
+- "Run PageRank on the citation graph — which highly-connected papers am I missing?"
+- "Find papers from before 2010 that are cited as foundational by multiple papers but that I haven't ingested."
+
+**Network & authorship**
+- "Which authors appear across the most papers? Who are the key figures in this literature?"
+- "Do any authors cite each other? Show me the mutual citation patterns."
+- "Are there clusters of papers that cite each other heavily but don't connect to the rest?"
+
 
 ## Ingestion
 
@@ -125,7 +133,6 @@ The `/query` command lets you search and explore your literature database using 
 - **Network analysis** — PageRank and Katz centrality to find structurally central papers; personalized PageRank seeded from specific papers; reverse mode to find surveys
 - **Raw SQL** — escape hatch for arbitrary DuckDB queries when built-in commands aren't enough
 
-If DuckDB is unavailable, fallback scripts query the JSON files directly with substring matching.
 
 ## Merging databases
 

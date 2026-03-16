@@ -14,7 +14,10 @@
     ]
   },
   "sandbox": {
-    "enabled": true
+    "enabled": true,
+    "network": {
+      "allowedHosts": ["extensions.duckdb.org"]
+    }
   },
   "hooks": {
     "SessionStart": [
