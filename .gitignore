@@ -5,6 +5,9 @@ __pycache__/
 *.egg-info/
 .DS_Store
 
+# User config
+project.yaml
+
 # User database (keep SCHEMA.md tracked)
 data/db/*.json
 data/db/lit.duckdb

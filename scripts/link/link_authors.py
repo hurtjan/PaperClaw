@@ -104,6 +104,9 @@ def main():
     parser.add_argument("--paper", nargs="+", metavar="PAPER_ID")
     args = parser.parse_args()
 
+    if not PAPERS_FILE.exists():
+        PAPERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PAPERS_FILE.write_text('{"metadata": {}, "papers": {}}')
     with open(PAPERS_FILE) as f:
         papers = json.load(f)["papers"]
 

@@ -121,8 +121,8 @@ def main():
     args = parser.parse_args()
 
     if not PAPERS_FILE.exists():
-        print("data/db/papers.json not found.", file=sys.stderr)
-        sys.exit(1)
+        PAPERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PAPERS_FILE.write_text('{"metadata": {}, "papers": {}}')
 
     db = json.loads(PAPERS_FILE.read_text())
     errors, warnings = run_checks(db)

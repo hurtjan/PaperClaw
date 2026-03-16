@@ -2,10 +2,10 @@
 """
 Incremental Step 3: Apply link decisions to papers.json.
 
-Combines link_candidates.json + link_resolved.json, creates/updates paper
+Reads link_resolved.txt for all citation decisions, creates/updates paper
 entries, wires cites/cited_by, and rebuilds index.
 
-Reads:  data/tmp/link_candidates.json, data/tmp/link_resolved.json, data/extractions/{id}.json, data/db/papers.json
+Reads:  data/tmp/link_resolved.txt, data/extractions/{id}.json, data/db/papers.json
 Writes: data/db/papers.json (updated)
 """
 
@@ -20,22 +20,54 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from litdb import normalize_doi, export_json, is_owned
 
-LINK_CANDIDATES_FILE = ROOT / "data" / "tmp" / "link_candidates.json"
-LINK_RESOLVED_FILE = ROOT / "data" / "tmp" / "link_resolved.json"
+LINK_RESOLVED_FILE = ROOT / "data" / "tmp" / "link_resolved.txt"
 EXTRACTIONS_DIR = ROOT / "data" / "extractions"
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 
 
+def parse_resolved_txt(path):
+    """Parse link_resolved.txt, returning (from_id, citation_map, version_links)."""
+    from_id = None
+    citation_map = {}
+    version_links = []
+
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("FROM_PAPER:"):
+                from_id = line.split(":", 1)[1].strip()
+            elif line.startswith("VERSION:"):
+                parts = line.split(":", 1)[1].strip().split(",", 1)
+                if len(parts) == 2:
+                    canonical_id = parts[0].strip()
+                    alias_id = parts[1].strip()
+                    version_links.append({"canonical_id": canonical_id, "alias_id": alias_id})
+            else:
+                parts = line.split(",", 1)
+                if len(parts) == 2:
+                    cit_id = parts[0].strip()
+                    canonical = parts[1].strip()
+                    citation_map[cit_id] = cit_id if canonical == "new" else canonical
+
+    return from_id, citation_map, version_links
+
+
 def main():
-    with open(LINK_CANDIDATES_FILE) as f:
-        candidates = json.load(f)
-    with open(LINK_RESOLVED_FILE) as f:
-        resolved = json.load(f)
+    from_id, citation_map, version_links = parse_resolved_txt(LINK_RESOLVED_FILE)
+
+    if not from_id:
+        print("ERROR: FROM_PAPER not found in link_resolved.txt", file=sys.stderr)
+        sys.exit(1)
+
+    if not PAPERS_FILE.exists():
+        PAPERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PAPERS_FILE.write_text('{"metadata": {}, "papers": {}}')
     with open(PAPERS_FILE) as f:
         db = json.load(f)
 
     papers = db["papers"]
-    from_id = candidates["from_paper"]
     print(f"Integrating: {from_id}")
 
     ext_path = EXTRACTIONS_DIR / f"{from_id}.json"
@@ -44,31 +76,6 @@ def main():
 
     source_file = Path(ext.get("source_file", "")).name
     ext_citations = {c.get("id", ""): c for c in ext.get("citations", [])}
-
-    # Build citation_map
-    judgments = resolved.get("judgments", {})
-    overrides = resolved.get("overrides", {})
-    citation_map = {}
-
-    for entry in candidates.get("auto_matched", []):
-        cit_id = entry["citation_id"]
-        if cit_id in overrides:
-            val = overrides[cit_id]
-            citation_map[cit_id] = cit_id if val == "new" else val
-        else:
-            citation_map[cit_id] = entry["candidate_id"]
-
-    for entry in candidates.get("needs_judgment", []):
-        cit_id = entry["citation_id"]
-        if cit_id in judgments:
-            decision = judgments[cit_id]
-            citation_map[cit_id] = cit_id if decision == "new" else decision
-        else:
-            print(f"  WARNING: no judgment for {cit_id} — treating as new")
-            citation_map[cit_id] = cit_id
-
-    for entry in candidates.get("new_citations", []):
-        citation_map[entry["citation_id"]] = entry["citation_id"]
 
     print(f"  Citation map: {len(citation_map)} entries")
 
@@ -135,7 +142,7 @@ def main():
     print(f"  Linked: {linked}")
 
     # Version links
-    for link in resolved.get("version_links", []):
+    for link in version_links:
         canonical_id = link["canonical_id"]
         alias_id = link["alias_id"]
         if canonical_id not in papers or alias_id not in papers:

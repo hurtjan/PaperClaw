@@ -32,6 +32,9 @@ def is_main_extraction(filename):
 
 
 def main():
+    if not PAPERS_FILE.exists():
+        PAPERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PAPERS_FILE.write_text('{"metadata": {}, "papers": {}}')
     db = json.loads(PAPERS_FILE.read_text())
     papers = db["papers"]
 

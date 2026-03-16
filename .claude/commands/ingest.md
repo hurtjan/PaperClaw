@@ -182,17 +182,6 @@ Note: `apply_link.py` (Phase 3) already rebuilds the context index and runs the 
 
 ---
 
-## Bootstrap (rare — fresh DB from extractions)
-
-Only needed when building a database from scratch using existing extraction files:
-
-1. `.venv/bin/python3 scripts/build/bootstrap_db.py` — create initial DB from extractions
-2. Run `match-resolver` agent — resolve cross-references
-3. `.venv/bin/python3 scripts/build/build_db.py` — finalize DB
-4. `.venv/bin/python3 scripts/build/build_authors.py` — build author index
-5. Then run Phase 4 (context index + consistency check + DuckDB rebuild)
-
----
 
 ## Agents Used
 
@@ -206,5 +195,4 @@ Only needed when building a database from scratch using existing extraction file
 | `paper-extractor-analysis` | Haiku | yes | Pass 3: methodology, claims, topics |
 | `paper-extractor-sections` | Haiku | yes | Pass 4: section headings, summaries, annotated text |
 | `cross-reference-linker` | Haiku | **no** | Full incremental linking pipeline |
-| `match-resolver` | Haiku | **no** | Bootstrap resolution |
 | `author-resolver` | Haiku | **no** | Author entity linking |

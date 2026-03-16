@@ -4,7 +4,7 @@ Incremental Step 1: Rank candidates for matching a new extraction against papers
 
 Usage: .venv/bin/python3 scripts/link/link_paper.py data/extractions/{id}.json
 
-Writes: data/tmp/link_candidates.json
+Writes: data/tmp/link_candidates.txt
 """
 
 import json
@@ -14,10 +14,108 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from litdb import find_candidates_indexed, PaperIndex, score_match, export_json
+from litdb import find_candidates_indexed, PaperIndex, score_match
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
-OUTPUT_FILE = ROOT / "data" / "tmp" / "link_candidates.json"
+OUTPUT_FILE = ROOT / "data" / "tmp" / "link_candidates.txt"
+
+
+def first_author_last(authors):
+    if not authors:
+        return ""
+    first = str(authors[0])
+    if ", " in first:
+        return first.split(",")[0].strip()
+    parts = first.split()
+    return parts[-1] if parts else ""
+
+
+def format_cit_line(cit_id, title, authors, year, journal, doi):
+    """Format: cit_id: Title, LastName, Year, Journal [doi:...]"""
+    last = first_author_last(authors)
+    parts = [p for p in [title, last, str(year) if year else "", journal] if p]
+    body = ", ".join(parts)
+    if doi:
+        body += f" [doi:{doi}]"
+    return f"{cit_id}: {body}"
+
+
+def format_db_paper_inline(paper, score=None):
+    """Format: [score ]paper_id: Title, LastName, Year, Journal [doi:...]"""
+    pid = paper.get("id", "")
+    title = paper.get("title", "")
+    authors = paper.get("authors", [])
+    year = paper.get("year", "")
+    journal = paper.get("journal", "")
+    doi = paper.get("doi", "")
+    last = first_author_last(authors)
+    parts = [p for p in [title, last, str(year) if year else "", journal] if p]
+    body = ", ".join(parts)
+    if doi:
+        body += f" [doi:{doi}]"
+    prefix = f"{score} " if score is not None else ""
+    return f"{prefix}{pid}: {body}"
+
+
+def format_candidates_txt(output, papers_by_id):
+    lines = []
+    lines.append(f"FROM_PAPER: {output['from_paper']}")
+    lines.append("")
+
+    auto = output["auto_matched"]
+    needs = output["needs_judgment"]
+    new = output["new_citations"]
+    versions = output["version_candidates"]
+
+    lines.append(f"=== AUTO_MATCHED [{len(auto)}] ===")
+    for entry in auto:
+        cit_line = format_cit_line(
+            entry["citation_id"], entry["citation_title"],
+            entry["citation_authors"], entry["citation_year"],
+            entry["citation_journal"], entry["citation_doi"],
+        )
+        cand_paper = papers_by_id.get(entry["candidate_id"], {"id": entry["candidate_id"], "title": ""})
+        cand_line = format_db_paper_inline(cand_paper, entry["score"])
+        lines.append(f"{cit_line} | {cand_line}")
+    lines.append("")
+
+    lines.append(f"=== NEEDS_JUDGMENT [{len(needs)}] ===")
+    for entry in needs:
+        cit_line = format_cit_line(
+            entry["citation_id"], entry["citation_title"],
+            entry["citation_authors"], entry["citation_year"],
+            entry["citation_journal"], entry["citation_doi"],
+        )
+        cand_parts = [format_db_paper_inline(c, c.get("score")) for c in entry.get("candidates", [])]
+        if cand_parts:
+            lines.append(f"{cit_line} | {' | '.join(cand_parts)}")
+        else:
+            lines.append(cit_line)
+    lines.append("")
+
+    lines.append(f"=== NEW [{len(new)}] ===")
+    for entry in new:
+        lines.append(format_cit_line(
+            entry["citation_id"], entry["citation_title"],
+            entry["citation_authors"], entry["citation_year"],
+            entry["citation_journal"], entry["citation_doi"],
+        ))
+    lines.append("")
+
+    lines.append(f"=== VERSION_CANDIDATES [{len(versions)}] ===")
+    for v in versions:
+        existing_id = v["existing_id"]
+        paper = papers_by_id.get(existing_id, {
+            "id": existing_id,
+            "title": v.get("existing_title", ""),
+            "authors": v.get("existing_authors", []),
+            "year": v.get("existing_year"),
+            "journal": "",
+        })
+        cand_line = format_db_paper_inline(paper)
+        lines.append(f"{cand_line} | score={v['score']}, sim={v['title_similarity']}")
+
+    return "\n".join(lines) + "\n"
 
 
 def main():
@@ -32,10 +130,14 @@ def main():
     with open(extraction_path) as f:
         extraction = json.load(f)
 
+    if not PAPERS_FILE.exists():
+        PAPERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PAPERS_FILE.write_text('{"metadata": {}, "papers": {}}')
     with open(PAPERS_FILE) as f:
         db = json.load(f)
 
     all_papers = list(db["papers"].values())
+    papers_by_id = {p["id"]: p for p in all_papers}
     paper_index = PaperIndex(all_papers)
     print(f"Loaded {len(all_papers)} papers from papers.json")
 
@@ -55,6 +157,7 @@ def main():
                 "citation_title": cit.get("title", ""),
                 "citation_year": str(cit.get("year", "")),
                 "citation_authors": cit.get("authors", []),
+                "citation_journal": cit.get("journal", ""),
                 "citation_doi": cit.get("doi"),
             })
         elif candidates[0]["score"] > 6:
@@ -62,10 +165,12 @@ def main():
             auto_matched.append({
                 "citation_id": cit.get("id", ""),
                 "citation_title": cit.get("title", ""),
+                "citation_year": str(cit.get("year", "")),
+                "citation_authors": cit.get("authors", []),
+                "citation_journal": cit.get("journal", ""),
+                "citation_doi": cit.get("doi"),
                 "candidate_id": top["id"],
-                "candidate_title": top["title"],
                 "score": top["score"],
-                "signals": top["signals"],
             })
         else:
             needs_judgment.append({
@@ -73,6 +178,7 @@ def main():
                 "citation_title": cit.get("title", ""),
                 "citation_year": str(cit.get("year", "")),
                 "citation_authors": cit.get("authors", []),
+                "citation_journal": cit.get("journal", ""),
                 "citation_doi": cit.get("doi"),
                 "candidates": candidates,
             })
@@ -95,22 +201,15 @@ def main():
 
     output = {
         "from_paper": extraction["id"],
-        "from_paper_metadata": {
-            "id": extraction["id"],
-            "title": extraction.get("title", ""),
-            "authors": extraction.get("authors", []),
-            "year": extraction.get("year"),
-            "journal": extraction.get("journal"),
-            "doi": extraction.get("doi"),
-        },
-        "existing_papers_count": len(all_papers),
         "auto_matched": auto_matched,
         "needs_judgment": needs_judgment,
         "new_citations": new_citations,
         "version_candidates": version_candidates,
     }
 
-    export_json(output, OUTPUT_FILE)
+    txt = format_candidates_txt(output, papers_by_id)
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_FILE.write_text(txt)
 
     print(f"\nResults:")
     print(f"  Auto-matched (score > 6): {len(auto_matched)}")
