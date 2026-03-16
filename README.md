@@ -21,7 +21,8 @@ Drop your PDFs in, run `/ingest`, and PaperClaw extracts structured data from ea
 After that, you can query your library.
 To save on Claude Code usage, you can even import other people's libraries and merge them with your own.
 
-### Example queries
+
+You can then query your library by calling `/query <your question>`.
 
 **Cross-corpus analysis**
 - "Which papers discuss [topic], and what methodologies do they use?"
