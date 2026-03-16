@@ -294,7 +294,9 @@ def main():
             if not candidates:
                 if name_str not in new_authors_map:
                     new_authors_map[name_str] = {"author_string": name_str, "paper_ids": [],
-                                                  "lastname": parsed["lastname"], "initials": parsed["initials"],
+                                                  "lastname": parsed["lastname"],
+                                                  "lastname_lower": parsed["lastname_lower"],
+                                                  "initials": parsed["initials"],
                                                   "full_firstname": parsed["full_firstname"]}
                 new_authors_map[name_str]["paper_ids"].append(paper_id)
             elif candidates[0]["score"] >= 3:
