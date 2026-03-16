@@ -49,7 +49,7 @@ If no memory file exists, this is the user's first ingest — prompt them to cho
 > |---|---|---|
 > | 1 | Metadata + reference list (required) | Yes |
 > | 2 | Citation contexts | Yes |
-> | 3 | Methodology, claims, topics | No |
+> | 3 | Methodology, claims, topics | Yes |
 > | 4 | Section headings, summaries, annotated text | Yes |
 >
 > Which passes should be your default? (e.g., "1, 2, 4" or "all")

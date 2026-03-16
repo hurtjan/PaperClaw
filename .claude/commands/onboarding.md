@@ -63,10 +63,9 @@ Check whether `ingest_defaults.md` exists in the memory directory.
 > | 3 | Research questions, methodology, claims, keywords, topics |
 > | 4 | Section headings, per-section summaries, annotated text |
 >
-> **Recommendation: all 4 passes** (full extraction). Lighter option: 1 + 2 only (skips deep analysis).
-> Which passes do you want as your default? (e.g. "all", "1 2 4", "1 2")
+> **Default: all 4 passes** (full extraction). Say "1 2" or "1 2 4" if you want a lighter default.
 
-Once the user answers, save their choice to `ingest_defaults.md` in the memory directory:
+Unless the user specifies otherwise, save all 4 passes as the default. Save the choice to `ingest_defaults.md` in the memory directory:
 
 ```markdown
 ---
