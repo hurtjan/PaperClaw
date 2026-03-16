@@ -21,6 +21,7 @@ Drop your PDFs in, run `/ingest`, and PaperClaw extracts structured data from ea
 After that, you can query your library.
 To save on Claude Code usage, you can even import other people's libraries and merge them with your own.
 
+**Token usage:** I tried to build PaperClaw as efficient as possible, for the extraction it mostly relies on the cheapest Haiku agents, only falling back to the more expensive Sonnet agents if necessary. However, the ingestion is still the most expensive part of the process. A typical Nature paper will cost around 5-15% of your session budget on the $20/Month Pro plan.
 
 You can then query your library by calling `/query <your question>`.
 
