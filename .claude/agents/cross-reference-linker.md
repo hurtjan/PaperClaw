@@ -1,7 +1,7 @@
 ---
 name: cross-reference-linker
 description: "Integrate a new paper extraction into data/db/papers.json and update the author index. Full pipeline: paper candidate ranking → match decisions → DB update → author linking. Invoke with the extraction ID.\n\nExamples:\n- user: 'Link martinez_2019_scaling' → runs full pipeline for that extraction"
-tools: Read, Write, Bash
+tools: Read, Write, Bash(.venv/bin/python3 scripts/link/*.py*)
 model: haiku
 color: green
 ---
@@ -80,7 +80,11 @@ If "No new papers to process", skip to end.
 
 ## Step 6: Read author candidates and decide
 
-Read `data/tmp/author_candidates.json`. Each entry has `auto`, `candidates`, or `new`.
+Read `data/tmp/author_candidates.txt`. The file has four sections:
+AUTO_MATCHED, BATCH_GROUPED, NEEDS_JUDGMENT, and NEW.
+- AUTO_MATCHED and BATCH_GROUPED are pre-decided. Review for correctness; override via `overrides` dict if wrong.
+- NEEDS_JUDGMENT entries require a decision in `decisions`.
+- NEW entries with [BATCH PRIMARY] absorbed other name forms. No action needed unless wrong.
 
 ## Step 7: Write author decisions
 

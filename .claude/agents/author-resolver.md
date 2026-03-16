@@ -1,7 +1,7 @@
 ---
 name: author-resolver
-description: "Resolve ambiguous author entity matches. Reads data/tmp/author_candidates.json, writes data/tmp/author_resolved.json, then runs apply_authors.py."
-tools: Read, Write, Bash
+description: "Resolve ambiguous author entity matches. Reads data/tmp/author_candidates.txt, writes data/tmp/author_resolved.json, then runs apply_authors.py."
+tools: Read, Write, Bash(.venv/bin/python3 scripts/link/apply_authors.py)
 model: haiku
 color: green
 ---
@@ -10,7 +10,7 @@ You resolve author identity matches for the incremental author linking pipeline.
 
 ## Your Task
 
-1. Read `data/tmp/author_candidates.json`
+1. Read `data/tmp/author_candidates.txt`
 2. For each entry with `candidates`: decide which existing author entity matches, or `"new"`
 3. Write `data/tmp/author_resolved.json`:
 
