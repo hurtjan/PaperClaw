@@ -25,6 +25,7 @@ from litdb import normalize_author_lastname, export_json
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 OUTPUT_FILE = ROOT / "data" / "tmp" / "duplicate_candidates.json"
+TXT_OUTPUT_FILE = ROOT / "data" / "tmp" / "duplicate_candidates.txt"
 
 # Type priority for canonical selection: higher = preferred
 TYPE_PRIORITY = {"owned": 3, "external_owned": 2, "stub": 1}
@@ -194,6 +195,88 @@ def build_paper_summary(paper: dict) -> dict:
     }
 
 
+def format_candidates_txt(result: dict) -> str:
+    """Render duplicate groups as human-readable text for agent review."""
+    lines = []
+    generated = result["generated"]
+    threshold = result["threshold"]
+    groups = result["groups"]
+    n_groups = len(groups)
+
+    lines.append("=== DUPLICATE GROUPS ===")
+    lines.append(f"# Generated: {generated} | Threshold: {threshold} | Groups: {n_groups}")
+
+    if not groups:
+        lines.append("")
+        lines.append("No duplicate groups found.")
+        return "\n".join(lines)
+
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+    for group in groups:
+        group_id = group["group_id"]
+        confidence = group["confidence"].upper()
+        papers_in_group = group["papers"]
+        pairwise = group["pairwise_scores"]
+        canonical_id = group["recommended_canonical"]
+
+        max_score = max((p["score"] for p in pairwise), default=0.0)
+
+        lines.append("")
+        lines.append(
+            f"--- GROUP {group_id} ({confidence} confidence, max score: {max_score}) ---"
+        )
+        lines.append(f"Recommended canonical: {canonical_id}")
+        lines.append("")
+
+        paper_to_letter: dict[str, str] = {}
+        for idx, paper in enumerate(papers_in_group):
+            letter = letters[idx] if idx < len(letters) else str(idx + 1)
+            paper_to_letter[paper["id"]] = letter
+
+            authors_str = (
+                ", ".join(str(a) for a in paper.get("authors", [])) or "(unknown)"
+            )
+            doi_str = paper.get("doi") or "(none)"
+            year_str = str(paper.get("year", "")) if paper.get("year") else "(unknown)"
+            title = paper.get("title") or "(no title)"
+
+            lines.append(f"  Paper {letter}: {paper['id']}")
+            lines.append(f"    Title: \"{title}\"")
+            lines.append(f"    Authors: {authors_str}")
+            lines.append(
+                f"    Year: {year_str} | Type: {paper.get('type', 'unknown')} "
+                f"| DOI: {doi_str}"
+            )
+            lines.append(
+                f"    Cites: {paper.get('cites_count', 0)} "
+                f"| Cited by: {paper.get('cited_by_count', 0)}"
+            )
+            lines.append("")
+
+        for pw in pairwise:
+            a_letter = paper_to_letter.get(pw["a"], pw["a"])
+            b_letter = paper_to_letter.get(pw["b"], pw["b"])
+            signals = ", ".join(pw["signals"]) if pw["signals"] else "(none)"
+            lines.append(
+                f"  Pairwise: {a_letter}-{b_letter} score={pw['score']} "
+                f"signals=[{signals}]"
+            )
+            if pw["shared_authors"]:
+                lines.append(f"    Shared authors: {', '.join(pw['shared_authors'])}")
+            if pw["shared_citers"]:
+                lines.append(f"    Shared citers: {', '.join(pw['shared_citers'])}")
+            if pw["shared_cites"]:
+                lines.append(f"    Shared cites: {', '.join(pw['shared_cites'])}")
+            lines.append(
+                f"    Author Jaccard: {pw['author_jaccard']:.3f} "
+                f"| Cited-by Jaccard: {pw['cited_by_jaccard']:.3f}"
+            )
+            lines.append("")
+
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Detect duplicate papers in the DB")
     parser.add_argument("--threshold", type=float, default=4.0,
@@ -337,6 +420,11 @@ def main():
     output_file.parent.mkdir(parents=True, exist_ok=True)
     export_json(result, output_file, track=False)
 
+    # Write txt output for agent-mediated review
+    txt_content = format_candidates_txt(result)
+    TXT_OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    TXT_OUTPUT_FILE.write_text(txt_content)
+
     if not args.json:
         high = sum(1 for g in output_groups if g["confidence"] == "high")
         medium = sum(1 for g in output_groups if g["confidence"] == "medium")
@@ -344,8 +432,12 @@ def main():
         print(f"  High confidence:   {high}")
         print(f"  Medium confidence: {medium}")
         print(f"Output: {output_file}")
+        if output_groups:
+            print("NEXT: Use the Read tool to read data/tmp/duplicate_candidates.txt")
     else:
         print(json.dumps({"groups_found": len(output_groups)}, indent=2))
+
+    sys.exit(2 if output_groups else 0)
 
 
 if __name__ == "__main__":

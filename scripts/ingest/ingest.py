@@ -111,6 +111,7 @@ def check_duplicate(metadata: dict, papers: dict) -> dict | None:
                     else "stub" if paper.get("type") == "stub"
                     else "local"
                 ),
+                "extraction_meta": paper.get("extraction_meta"),
             }
 
     if best_match and best_match["score"] >= 2:
@@ -195,6 +196,11 @@ def main():
                     print(f"    New PDF:  {new_title[:80]}")
                     print(f"    In DB:    {match['title'][:80]} ({match['id']})")
                     print(f"  → PDF left in staging. Remove it manually if confirmed duplicate.")
+                    em = match.get("extraction_meta")
+                    if not em or set(em.get("passes_completed", [])) < {1, 2, 3, 4}:
+                        completed = em.get("passes_completed", []) if em else []
+                        print(f"    ⚠ Existing entry has incomplete extractions (passes: {completed or 'none'})")
+                        print(f"    → If this is the same paper, consider running missing passes on the existing entry")
                     duplicates.append((pdf_path.name, match, text[:3000]))
 
                     # Clean up extracted text if it was written by a previous partial run

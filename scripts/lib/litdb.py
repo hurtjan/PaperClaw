@@ -519,3 +519,38 @@ def derive_author_lastnames(authors: list) -> list:
     for author in authors:
         result.extend(normalize_author_lastname(author))
     return result
+
+
+def generate_paper_id(title: str, authors: list, year, existing_ids: set) -> str:
+    """
+    Generate {first_author_lastname}_{year}_{first_significant_title_word}.
+    Appends _2, _3, ... on collision.
+    """
+    if authors:
+        first = str(authors[0])
+        lastname = first.split(",")[0].strip() if "," in first else (first.split() or ["unknown"])[-1]
+    else:
+        lastname = "unknown"
+
+    lastname = re.sub(r"[^a-z0-9]", "_", transliterate(lastname).lower()).strip("_")
+    lastname = re.sub(r"_+", "_", lastname) or "unknown"
+
+    yr = str(year).strip() if year else "0000"
+
+    title_word = "paper"
+    if title:
+        text = re.sub(r"[^\w\s]", " ", transliterate(title).lower())
+        text = re.sub(r"\s+", " ", text).strip()
+        for word in text.split():
+            if word and word not in TITLE_STOP_WORDS and not word.isdigit():
+                title_word = word
+                break
+
+    base = f"{lastname}_{yr}_{title_word}"
+    if base not in existing_ids:
+        return base
+    for suffix in range(2, 1000):
+        candidate = f"{base}_{suffix}"
+        if candidate not in existing_ids:
+            return candidate
+    return f"{base}_x"

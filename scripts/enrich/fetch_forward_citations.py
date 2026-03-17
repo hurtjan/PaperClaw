@@ -3,8 +3,9 @@
 fetch_forward_citations.py — Fetch papers that cite owned papers via Semantic Scholar API.
 
 Discovers forward citations (papers published AFTER the owned paper that cite it),
-adds them to data/db/papers.json as stub entries with discovered_via="s2_forward",
-and records them in forward_cited_by on the owned paper.
+saves raw S2 results to data/tmp/s2_forward_results.json, and persists S2 IDs on
+owned papers. A subsequent link_forward.py + agent review step integrates them into
+the DB.
 
 Usage:
   .venv/bin/python3 scripts/enrich/fetch_forward_citations.py --paper ID [ID ...] [options]
@@ -12,8 +13,9 @@ Usage:
 
 Options:
   --force              Re-fetch even if fetched within 30 days
-  --dry-run            Simulate without writing to data/db/papers.json
+  --dry-run            Simulate without writing to disk
   --max-per-paper N    Cap forward citations per paper (default: unlimited)
+  --no-review          Auto-accept all matches without agent review (legacy behavior)
 
 Environment:
   S2_API_KEY  — optional Semantic Scholar API key (enables ~8 req/sec vs 1 req/sec)
@@ -36,16 +38,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from litdb import (PaperIndex, find_candidates_indexed, normalize_doi, export_json,
                    TITLE_STOP_WORDS, transliterate, normalize_title, derive_author_lastnames,
-                   is_owned)
+                   is_owned, generate_paper_id)
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 S2_FETCH_LOG = ROOT / "data" / "db" / "s2_fetch_log.json"
+S2_RESULTS_FILE = ROOT / "data" / "tmp" / "s2_forward_results.json"
 S2_BASE_URL = "https://api.semanticscholar.org/graph/v1"
 
 # Skip papers fetched within this many days (unless --force)
 CACHE_DAYS = 30
 
-# Minimum score to consider an S2 paper a match against an existing DB entry
+# Minimum score to consider an S2 paper a match against an existing DB entry (--no-review mode)
 MATCH_SCORE_THRESHOLD = 3
 
 
@@ -244,41 +247,6 @@ def s2_entry_to_record(s2_entry: dict) -> dict:
     }
 
 
-def generate_paper_id(title: str, authors: list, year, existing_ids: set) -> str:
-    """
-    Generate {first_author_lastname}_{year}_{first_significant_title_word}.
-    Appends _2, _3, ... on collision.
-    """
-    if authors:
-        first = str(authors[0])
-        lastname = first.split(",")[0].strip() if "," in first else (first.split() or ["unknown"])[-1]
-    else:
-        lastname = "unknown"
-
-    lastname = re.sub(r"[^a-z0-9]", "_", transliterate(lastname).lower()).strip("_")
-    lastname = re.sub(r"_+", "_", lastname) or "unknown"
-
-    yr = str(year).strip() if year else "0000"
-
-    title_word = "paper"
-    if title:
-        text = re.sub(r"[^\w\s]", " ", transliterate(title).lower())
-        text = re.sub(r"\s+", " ", text).strip()
-        for word in text.split():
-            if word and word not in TITLE_STOP_WORDS and not word.isdigit():
-                title_word = word
-                break
-
-    base = f"{lastname}_{yr}_{title_word}"
-    if base not in existing_ids:
-        return base
-    for suffix in range(2, 1000):
-        candidate = f"{base}_{suffix}"
-        if candidate not in existing_ids:
-            return candidate
-    return f"{base}_x"
-
-
 # ---------------------------------------------------------------------------
 # Fetch log
 # ---------------------------------------------------------------------------
@@ -313,27 +281,21 @@ def should_fetch(paper_id: str, log: dict, force: bool) -> bool:
 # Core processing
 # ---------------------------------------------------------------------------
 
-def process_paper(
+def _resolve_and_persist_s2_id(
     paper_id: str,
     paper: dict,
-    papers: dict,
-    index: PaperIndex,
     api_key: str | None,
-    max_per_paper: int | None,
     dry_run: bool,
     log: dict,
-) -> dict:
+) -> str | None:
     """
-    Fetch and integrate forward citations for one owned paper.
-    Returns stats: {new, matched, failed, s2_paper_id}.
+    Resolve S2 paper ID via DOI (fast path) or title search (fallback).
+    Persists s2_paper_id to the paper dict if found and not dry_run.
+    Returns the S2 paper ID or None if not found.
     """
-    stats = {"new": 0, "matched": 0, "failed": 0, "s2_paper_id": None}
     doi = normalize_doi(paper.get("doi"))
-
-    print(f"\n[{paper_id}]")
-
-    # Step 1: Resolve → S2 paper ID (DOI fast path, title search fallback)
     s2_paper_id = paper.get("s2_paper_id")
+
     if not s2_paper_id:
         if doi:
             print(f"  Resolving DOI {doi} → S2 paper ID...")
@@ -357,7 +319,7 @@ def process_paper(
                 "new_added": 0,
             }
             save_fetch_log(log)
-            return stats
+            return None
 
         print(f"  S2 paper ID: {s2_paper_id}")
         if not dry_run:
@@ -365,14 +327,89 @@ def process_paper(
     else:
         print(f"  S2 paper ID (cached): {s2_paper_id}")
 
-    stats["s2_paper_id"] = s2_paper_id
+    return s2_paper_id
 
-    # Step 2: Fetch all citing papers from S2
+
+def process_paper_raw(
+    paper_id: str,
+    paper: dict,
+    api_key: str | None,
+    max_per_paper: int | None,
+    dry_run: bool,
+    log: dict,
+) -> dict | None:
+    """
+    Fetch S2 data for one owned paper (default mode).
+    Returns a raw result dict for s2_forward_results.json, or None if not found in S2.
+    Persists s2_paper_id on the owned paper dict in place.
+    """
+    print(f"\n[{paper_id}]")
+
+    s2_paper_id = _resolve_and_persist_s2_id(paper_id, paper, api_key, dry_run, log)
+    if not s2_paper_id:
+        return None
+
     print(f"  Fetching forward citations from S2...")
     s2_data = fetch_all_citations(s2_paper_id, api_key, max_per_paper)
     print(f"  S2 returned {len(s2_data)} citing paper(s)")
 
-    # Step 3: Deduplicate and integrate into graph
+    citing_papers = []
+    failed = 0
+    for entry in s2_data:
+        record = s2_entry_to_record(entry)
+        if record.get("title"):
+            citing_papers.append(record)
+        else:
+            failed += 1
+
+    if failed:
+        print(f"  Skipped (no title): {failed}")
+    print(f"  Valid records: {len(citing_papers)}")
+
+    log["fetches"][paper_id] = {
+        "last_fetched": str(date.today()),
+        "result": "ok",
+        "s2_paper_id": s2_paper_id,
+        "citing_count": len(citing_papers),
+    }
+    if not dry_run:
+        save_fetch_log(log)
+
+    return {
+        "owned_paper_id": paper_id,
+        "s2_paper_id": s2_paper_id,
+        "citing_papers": citing_papers,
+    }
+
+
+def process_paper(
+    paper_id: str,
+    paper: dict,
+    papers: dict,
+    index: PaperIndex,
+    api_key: str | None,
+    max_per_paper: int | None,
+    dry_run: bool,
+    log: dict,
+) -> dict:
+    """
+    Fetch and directly integrate forward citations (--no-review mode).
+    Returns stats: {new, matched, failed, s2_paper_id}.
+    """
+    stats = {"new": 0, "matched": 0, "failed": 0, "s2_paper_id": None}
+
+    print(f"\n[{paper_id}]")
+
+    s2_paper_id = _resolve_and_persist_s2_id(paper_id, paper, api_key, dry_run, log)
+    if not s2_paper_id:
+        return stats
+
+    stats["s2_paper_id"] = s2_paper_id
+
+    print(f"  Fetching forward citations from S2...")
+    s2_data = fetch_all_citations(s2_paper_id, api_key, max_per_paper)
+    print(f"  S2 returned {len(s2_data)} citing paper(s)")
+
     existing_ids = set(papers.keys())
     cited_by = paper.setdefault("forward_cited_by", [])
 
@@ -466,9 +503,11 @@ def main():
     parser.add_argument("--force", action="store_true",
                         help="Re-fetch even if already fetched within 30 days")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Simulate without modifying data/db/papers.json")
+                        help="Simulate without modifying any files")
     parser.add_argument("--max-per-paper", type=int, default=None, metavar="N",
                         help="Limit forward citations fetched per paper")
+    parser.add_argument("--no-review", action="store_true",
+                        help="Auto-accept all matches without agent review (legacy behavior)")
     args = parser.parse_args()
 
     api_key = os.environ.get("S2_API_KEY")
@@ -498,59 +537,113 @@ def main():
                 sys.exit(1)
 
     log = load_fetch_log()
-    total_new = total_matched = total_failed = skipped = 0
+    skipped = 0
 
-    for paper_id in target_ids:
-        if not should_fetch(paper_id, log, args.force):
-            last = log["fetches"][paper_id].get("last_fetched", "?")
-            print(f"[{paper_id}] SKIP: fetched {last} (use --force to re-fetch)")
-            skipped += 1
-            continue
+    if args.no_review:
+        # Legacy mode: direct integration without agent review
+        print("\n[--no-review] Direct integration mode")
+        total_new = total_matched = total_failed = 0
 
-        index = PaperIndex(list(papers.values()))
+        for paper_id in target_ids:
+            if not should_fetch(paper_id, log, args.force):
+                last = log["fetches"][paper_id].get("last_fetched", "?")
+                print(f"[{paper_id}] SKIP: fetched {last} (use --force to re-fetch)")
+                skipped += 1
+                continue
 
-        stats = process_paper(
-            paper_id=paper_id,
-            paper=papers[paper_id],
-            papers=papers,
-            index=index,
-            api_key=api_key,
-            max_per_paper=args.max_per_paper,
-            dry_run=args.dry_run,
-            log=log,
-        )
-        total_new += stats["new"]
-        total_matched += stats["matched"]
-        total_failed += stats["failed"]
+            index = PaperIndex(list(papers.values()))
 
-    if not args.dry_run:
-        owned_count = sum(1 for p in papers.values() if is_owned(p))
-        stub_count = sum(1 for p in papers.values() if p.get("type") == "stub")
-        db["metadata"]["last_updated"] = str(date.today())
-        db["metadata"]["owned_count"] = owned_count
-        db["metadata"]["stub_count"] = stub_count
+            stats = process_paper(
+                paper_id=paper_id,
+                paper=papers[paper_id],
+                papers=papers,
+                index=index,
+                api_key=api_key,
+                max_per_paper=args.max_per_paper,
+                dry_run=args.dry_run,
+                log=log,
+            )
+            total_new += stats["new"]
+            total_matched += stats["matched"]
+            total_failed += stats["failed"]
 
-        export_json(db, PAPERS_FILE,
-                    description=f"S2 forward: {total_new} new citations, {total_matched} matched")
-        print(f"\nSaved papers.json: {owned_count} owned + {stub_count} stub = "
-              f"{owned_count + stub_count} total")
+        if not args.dry_run:
+            owned_count = sum(1 for p in papers.values() if is_owned(p))
+            stub_count = sum(1 for p in papers.values() if p.get("type") == "stub")
+            db["metadata"]["last_updated"] = str(date.today())
+            db["metadata"]["owned_count"] = owned_count
+            db["metadata"]["stub_count"] = stub_count
 
-        result_index = __import__("subprocess").run(
-            [sys.executable, str(ROOT / "scripts" / "build" / "build_index.py")],
-            cwd=ROOT, capture_output=True, text=True,
-        )
-        if result_index.returncode == 0:
-            print("Index rebuilt (data/db/contexts.json)")
+            export_json(db, PAPERS_FILE,
+                        description=f"S2 forward: {total_new} new citations, {total_matched} matched")
+            print(f"\nSaved papers.json: {owned_count} owned + {stub_count} stub = "
+                  f"{owned_count + stub_count} total")
+
+            result_index = __import__("subprocess").run(
+                [sys.executable, str(ROOT / "scripts" / "build" / "build_index.py")],
+                cwd=ROOT, capture_output=True, text=True,
+            )
+            if result_index.returncode == 0:
+                print("Index rebuilt (data/db/contexts.json)")
+            else:
+                print(f"WARNING: index rebuild failed:\n{result_index.stderr.strip()}", file=sys.stderr)
+
+        prefix = "[DRY RUN] " if args.dry_run else ""
+        print(f"\n{prefix}Summary:")
+        print(f"  Papers queried:          {len(target_ids) - skipped}")
+        print(f"  Papers skipped (cached): {skipped}")
+        print(f"  New stub entries:        {total_new}")
+        print(f"  Matched existing:        {total_matched}")
+        print(f"  Failed (no title/etc):   {total_failed}")
+
+    else:
+        # Default mode: fetch raw data, save to s2_forward_results.json for agent review
+        raw_results = []
+
+        for paper_id in target_ids:
+            if not should_fetch(paper_id, log, args.force):
+                last = log["fetches"][paper_id].get("last_fetched", "?")
+                print(f"[{paper_id}] SKIP: fetched {last} (use --force to re-fetch)")
+                skipped += 1
+                continue
+
+            result = process_paper_raw(
+                paper_id=paper_id,
+                paper=papers[paper_id],
+                api_key=api_key,
+                max_per_paper=args.max_per_paper,
+                dry_run=args.dry_run,
+                log=log,
+            )
+            if result:
+                raw_results.append(result)
+
+        fetched = len(target_ids) - skipped
+        total_citing = sum(len(r["citing_papers"]) for r in raw_results)
+
+        if not args.dry_run:
+            # Persist S2 IDs added to owned papers during fetch
+            owned_count = sum(1 for p in papers.values() if is_owned(p))
+            stub_count = sum(1 for p in papers.values() if p.get("type") == "stub")
+            db["metadata"]["last_updated"] = str(date.today())
+            db["metadata"]["owned_count"] = owned_count
+            db["metadata"]["stub_count"] = stub_count
+            export_json(db, PAPERS_FILE, description="S2 ID resolution for forward citations")
+
+            S2_RESULTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            export_json(raw_results, S2_RESULTS_FILE, track=False)
+            print(f"\nSaved {total_citing} citing papers from {len(raw_results)} owned paper(s) "
+                  f"to {S2_RESULTS_FILE}")
         else:
-            print(f"WARNING: index rebuild failed:\n{result_index.stderr.strip()}", file=sys.stderr)
+            print(f"\n[DRY RUN] Would save {total_citing} citing papers from {len(raw_results)} "
+                  f"owned paper(s) to {S2_RESULTS_FILE}")
 
-    prefix = "[DRY RUN] " if args.dry_run else ""
-    print(f"\n{prefix}Summary:")
-    print(f"  Papers queried:          {len(target_ids) - skipped}")
-    print(f"  Papers skipped (cached): {skipped}")
-    print(f"  New stub entries:  {total_new}")
-    print(f"  Matched existing:        {total_matched}")
-    print(f"  Failed (no title/etc):   {total_failed}")
+        print(f"\nSummary:")
+        print(f"  Papers queried:          {fetched}")
+        print(f"  Papers skipped (cached): {skipped}")
+        print(f"  Total citing papers:     {total_citing}")
+        if not args.dry_run and raw_results:
+            print(f"\nNEXT: .venv/bin/python3 scripts/link/link_forward.py")
 
 
 if __name__ == "__main__":
