@@ -55,7 +55,7 @@ Key commands:
 - `shared-refs <id1> <id2> [id3 ...]` — list cited references shared between papers
 - `shared-papers <author1> <author2> [author3 ...]` — papers co-authored by all given authors
 - `top-cited [N]` · `purpose <tag> [--limit N]`
-- `abstract <id>` · `claims <id>` · `keywords <id>` · `methodology <id>` · `sections <id>` · `questions <id>` · `data-sources <id>`
+- `abstract <id>` · `claims <id> [--type TYPE]` · `keywords <id>` · `methodology <id>` · `sections <id>` · `questions <id>` · `data-sources <id>` — lookup by paper ID; `claims` does **not** support `--limit` (use `search-claims` for text search)
 - `pagerank [--seed ID ...] [--top N] [--owned] [--stubs] [--reverse] [--undirected] [--alpha FLOAT]` — in-database PageRank centrality
 - `katz [--seed ID ...] [--top N] [--owned] [--stubs] [--reverse] [--undirected] [--alpha FLOAT] [--beta FLOAT]` — in-database Katz centrality
 - `stats` · `methods` · `purposes-list`

@@ -222,7 +222,7 @@ For each newly extracted paper, sequentially run the `cross-reference-linker` ag
 
 ## Phase 4 — Database Rebuild
 
-1. `.venv/bin/python3 scripts/query/duckdb_query.py rebuild` — rebuild DuckDB query database
+1. `.venv/bin/python3 scripts/query/duckdb_query.py rebuild` — rebuild DuckDB (skips FTS for speed). Relay the `FTS index:` status line from the output to the user.
 
 Note: `apply_link.py` (Phase 3) already rebuilds the context index and runs the consistency check.
 

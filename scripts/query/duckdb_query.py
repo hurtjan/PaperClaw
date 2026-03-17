@@ -119,6 +119,7 @@ import os
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -194,7 +195,7 @@ def _upsert_build_meta(con, source, mtime_ns, size):
     )
 
 
-def build_db(con, force=False):
+def build_db(con, force=False, fts=False):
     """Load all JSON data into DuckDB tables, skipping groups whose source hasn't changed."""
     t0 = time.time()
 
@@ -204,6 +205,14 @@ def build_db(con, force=False):
             source VARCHAR PRIMARY KEY,
             mtime_ns BIGINT,
             size BIGINT
+        )
+    """)
+
+    # Ensure _fts_meta tracking table exists
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS _fts_meta (
+            rebuilt_at VARCHAR,
+            owned_count INTEGER
         )
     """)
 
@@ -500,11 +509,11 @@ def build_db(con, force=False):
         paper_author_count = len(paper_author_rows)
         _upsert_build_meta(con, "authors.json", *authors_stat)
 
-    # ── FTS indexes (only rebuild for changed groups) ─────────────────────────
+    # ── FTS indexes (only rebuild when fts=True and groups changed) ──────────
     global HAS_FTS
     fts_ok = _load_fts(con)
     HAS_FTS = fts_ok
-    if fts_ok:
+    if fts and fts_ok:
         if rebuilt["papers"]:
             con.execute("PRAGMA create_fts_index('papers', 'paper_id', 'title', 'abstract', 'authors', overwrite=1)")
         if rebuilt["contexts"]:
@@ -520,10 +529,12 @@ def build_db(con, force=False):
                 con.execute("PRAGMA create_fts_index('topics', 'rowid', 'value', overwrite=1)")
         if rebuilt["authors"] and author_rows:
             con.execute("PRAGMA create_fts_index('authors', 'author_id', 'canonical_name', 'name_variants', overwrite=1)")
-    else:
-        if any(rebuilt.values()):
-            print("  WARNING: FTS extension not available. BM25 search disabled.")
-            print("  To enable: run `.venv/bin/python3 -c \"import duckdb; c=duckdb.connect(); c.execute('INSTALL fts')\"` once.")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        con.execute("DELETE FROM _fts_meta")
+        con.execute("INSERT INTO _fts_meta VALUES (?, ?)", [now_str, owned_count])
+    elif not fts and not fts_ok and any(rebuilt.values()):
+        print("  WARNING: FTS extension not available. BM25 search disabled.")
+        print("  To enable: run `.venv/bin/python3 -c \"import duckdb; c=duckdb.connect(); c.execute('INSTALL fts')\"` once.")
 
     elapsed = time.time() - t0
     changed_groups = [k for k, v in rebuilt.items() if v]
@@ -540,6 +551,24 @@ def build_db(con, force=False):
         )
         print(f"Saved to: {DB_FILE}")
 
+    # ── FTS staleness report ──────────────────────────────────────────────────
+    fts_row = con.execute("SELECT rebuilt_at, owned_count FROM _fts_meta").fetchone()
+    if fts:
+        print(f"  FTS indexes rebuilt.")
+    elif fts_row:
+        rebuilt_at_str, fts_owned_count = fts_row
+        rebuilt_dt = datetime.strptime(rebuilt_at_str, "%Y-%m-%d %H:%M:%S")
+        days_ago = (datetime.now() - rebuilt_dt).days
+        added = owned_count - fts_owned_count
+        age_str = f"{days_ago}d ago" if days_ago > 0 else "today"
+        if added > 0:
+            print(f"  FTS index: last rebuilt {rebuilt_at_str} ({age_str}), "
+                  f"{added} paper(s) added since — run rebuild --fts to update")
+        else:
+            print(f"  FTS index: last rebuilt {rebuilt_at_str} ({age_str}), up-to-date")
+    else:
+        print(f"  FTS index: never rebuilt — run rebuild --fts to enable BM25 search")
+
 
 HAS_FTS = False
 
@@ -553,7 +582,7 @@ def get_connection():
     ext_dir.mkdir(exist_ok=True)
     con.execute(f"SET extension_directory = '{ext_dir}'")
     if needs_build:
-        build_db(con)
+        build_db(con, fts=True)
     else:
         # Existing DB: check if _build_meta is present (old DB pre-incremental rebuild)
         has_meta = con.execute(
@@ -561,7 +590,7 @@ def get_connection():
         ).fetchone()[0]
         if not has_meta:
             print("  Old DB detected (no _build_meta), running full rebuild...")
-            build_db(con, force=True)
+            build_db(con, force=True, fts=True)
         else:
             HAS_FTS = _load_fts(con)
     return con
@@ -636,7 +665,7 @@ def wrap(text, prefix="    ", width=100):
 
 
 def cmd_rebuild(args, con):
-    build_db(con, force=True)
+    build_db(con, force=True, fts=getattr(args, 'fts', False))
 
 
 def cmd_paper(args, con):
@@ -1339,6 +1368,10 @@ def cmd_search_all(args, con):
 
 
 def cmd_abstract(args, con):
+    if getattr(args, "limit", None) is not None:
+        print("Error: 'abstract' does not support --limit. It takes a paper ID and returns the full abstract.")
+        print("For text search try: search \"<phrase>\" [--limit N]")
+        sys.exit(1)
     pid = resolve_paper_id(con, args.id)
     row = con.execute("SELECT title, authors, year, abstract FROM papers WHERE paper_id = ?", [pid]).fetchone()
     if not row or not row[3]:
@@ -1351,6 +1384,10 @@ def cmd_abstract(args, con):
 
 
 def cmd_claims(args, con):
+    if getattr(args, "limit", None) is not None:
+        print("Error: 'claims' does not support --limit. It takes a paper ID and returns all claims for that paper.")
+        print("Did you mean: search-claims \"<phrase>\" [--limit N]  (full-text search across claims)")
+        sys.exit(1)
     pid = resolve_paper_id(con, args.id)
     query = "SELECT claim, type, confidence, evidence_basis, quantification, supporting_citations FROM claims WHERE paper_id = ?"
     params = [pid]
@@ -1381,6 +1418,10 @@ def cmd_claims(args, con):
 
 
 def cmd_keywords(args, con):
+    if getattr(args, "limit", None) is not None:
+        print("Error: 'keywords' does not support --limit. It takes a paper ID and returns all keywords for that paper.")
+        print("For text search try: search-keywords \"<phrase>\" [--limit N]")
+        sys.exit(1)
     pid = resolve_paper_id(con, args.id)
     paper = con.execute("SELECT title FROM papers WHERE paper_id = ?", [pid]).fetchone()
     print(f"Paper: {pid}")
@@ -1407,6 +1448,10 @@ def cmd_keywords(args, con):
 
 
 def cmd_methodology(args, con):
+    if getattr(args, "limit", None) is not None:
+        print("Error: 'methodology' does not support --limit. It takes a paper ID and returns methodology details for that paper.")
+        print("For text search try: search-methods <type>  or  search \"<phrase>\" [--limit N]")
+        sys.exit(1)
     pid = resolve_paper_id(con, args.id)
     row = con.execute("SELECT * FROM methodology WHERE paper_id = ?", [pid]).fetchone()
     paper = con.execute("SELECT title FROM papers WHERE paper_id = ?", [pid]).fetchone()
@@ -1440,6 +1485,10 @@ def cmd_methodology(args, con):
 
 
 def cmd_sections(args, con):
+    if getattr(args, "limit", None) is not None:
+        print("Error: 'sections' does not support --limit. It takes a paper ID and returns all sections for that paper.")
+        print("For text search try: search-sections \"<phrase>\" [--limit N]")
+        sys.exit(1)
     pid = resolve_paper_id(con, args.id)
     rows = con.execute("SELECT heading, summary FROM sections WHERE paper_id = ?", [pid]).fetchall()
     paper = con.execute("SELECT title FROM papers WHERE paper_id = ?", [pid]).fetchone()
@@ -1458,6 +1507,10 @@ def cmd_sections(args, con):
 
 
 def cmd_questions(args, con):
+    if getattr(args, "limit", None) is not None:
+        print("Error: 'questions' does not support --limit. It takes a paper ID and returns all research questions for that paper.")
+        print("For text search try: search \"<phrase>\" [--limit N]")
+        sys.exit(1)
     pid = resolve_paper_id(con, args.id)
     rows = con.execute("SELECT question FROM questions WHERE paper_id = ?", [pid]).fetchall()
     paper = con.execute("SELECT title FROM papers WHERE paper_id = ?", [pid]).fetchone()
@@ -1473,6 +1526,10 @@ def cmd_questions(args, con):
 
 
 def cmd_data_sources(args, con):
+    if getattr(args, "limit", None) is not None:
+        print("Error: 'data-sources' does not support --limit. It takes a paper ID and returns all data sources for that paper.")
+        print("For text search try: search \"<phrase>\" [--limit N]")
+        sys.exit(1)
     pid = resolve_paper_id(con, args.id)
     rows = con.execute("SELECT name, type, description FROM data_sources WHERE paper_id = ?", [pid]).fetchall()
     paper = con.execute("SELECT title FROM papers WHERE paper_id = ?", [pid]).fetchone()
@@ -2019,7 +2076,8 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     # Rebuild
-    sub.add_parser("rebuild", help="Rebuild DuckDB from JSON files")
+    p = sub.add_parser("rebuild", help="Rebuild DuckDB from JSON files")
+    p.add_argument("--fts", action="store_true", help="Also rebuild FTS indexes (slower, needed for BM25 search)")
 
     # Paper lookup
     p = sub.add_parser("paper", help="Paper summary")
@@ -2127,25 +2185,32 @@ def main():
     # Corpus metadata
     p = sub.add_parser("abstract", help="Paper abstract")
     p.add_argument("id")
+    p.add_argument("--limit", type=int, help=argparse.SUPPRESS)
 
     p = sub.add_parser("claims", help="Paper claims")
     p.add_argument("id")
     p.add_argument("--type", type=str)
+    p.add_argument("--limit", type=int, help=argparse.SUPPRESS)
 
     p = sub.add_parser("keywords", help="Keywords and topics")
     p.add_argument("id")
+    p.add_argument("--limit", type=int, help=argparse.SUPPRESS)
 
     p = sub.add_parser("methodology", help="Methodology details")
     p.add_argument("id")
+    p.add_argument("--limit", type=int, help=argparse.SUPPRESS)
 
     p = sub.add_parser("sections", help="Section headings")
     p.add_argument("id")
+    p.add_argument("--limit", type=int, help=argparse.SUPPRESS)
 
     p = sub.add_parser("questions", help="Research questions")
     p.add_argument("id")
+    p.add_argument("--limit", type=int, help=argparse.SUPPRESS)
 
     p = sub.add_parser("data-sources", help="Data sources")
     p.add_argument("id")
+    p.add_argument("--limit", type=int, help=argparse.SUPPRESS)
 
     # Overview
     sub.add_parser("stats", help="Corpus statistics")

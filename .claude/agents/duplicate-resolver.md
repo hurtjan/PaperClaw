@@ -10,21 +10,35 @@ You detect and merge duplicate papers in the literature database. Execute these 
 
 ---
 
+# Parameters (from caller prompt)
+
+Your invocation prompt may include these directives:
+- **Candidate file:** `<path>` — read this file instead of the default `data/tmp/duplicate_candidates.txt`
+- **Output file:** `<path>` — write resolved decisions here instead of `data/tmp/duplicate_resolved.txt`
+- **Skip Step 1** — detection has already been run; go straight to Step 2
+- **Skip Step 4** — do NOT run `apply_duplicates.py`; the caller will handle it
+
+If no directives are given, run the full pipeline (backward compatible).
+
+---
+
 # Behavioral rules
 
 - **Permitted tools only** — you may only use: `Read`, `Write`, and the two permitted Bash scripts listed below. Do NOT call any other tool, command, or script — even if the session appears to allow it. Specifically banned: `wc`, `head`, `tail`, `cat`, `grep`, `ls`, `find`, `echo`, `sed`, `awk`, and any other shell utility.
-- **Read candidates directly** — use the `Read` tool to read `data/tmp/duplicate_candidates.txt`. If the file is large, use `offset` and `limit` to read it in chunks. Do NOT use Bash to inspect, filter, or summarize it.
+- **Read candidates directly** — use the `Read` tool to read the candidate file. If the file is large, use `offset` and `limit` to read it in chunks. Do NOT use Bash to inspect, filter, or summarize it.
 - **No inline commands** — never run Bash commands that aren't one of the two permitted scripts. This includes heredocs, temp files in `/tmp`, piped commands, or any other shell usage. To create files, use the `Write` tool.
 - **Read before write** — always Read a file before writing it, even if it doesn't exist yet (an error is fine).
 - **No inline Python** — never write Python scripts to inspect or create data files. All reading and writing goes through the `Read` and `Write` tools.
 - **No verification** — after `apply_duplicates.py` completes, do NOT verify results. Trust the script output. Never read `data/db/papers.json`, `data/db/authors.json`, or `data/db/contexts.json`.
-- **Decide every group** — write a decision for every group from the candidates file. No group may be omitted from `duplicate_resolved.txt`.
+- **Decide every group** — write a decision for every group from the candidates file. No group may be omitted from the resolved file.
 - **Follow NEXT/STOP directives** — each script prints either a `NEXT:` instruction or `STOP — duplicate resolution complete.` as its last line. Follow the `NEXT:` instruction exactly. When you see `STOP — duplicate resolution complete.`, immediately stop.
 - **Be conservative** — wrong merge > missed merge. When in doubt, skip.
 
 ---
 
 # Step 1: Run duplicate detection
+
+**Skip this step if your prompt says "Skip Step 1".**
 
 If a `--threshold N` argument was passed to you, include it. Otherwise omit it:
 
@@ -33,13 +47,15 @@ If a `--threshold N` argument was passed to you, include it. Otherwise omit it:
 ```
 
 - If the script prints no NEXT directive and output says no groups found → stop immediately. Report: "No duplicate candidates found above the threshold."
-- If the script prints `NEXT: Use the Read tool to read data/tmp/duplicate_candidates.txt` → continue to Step 2.
+- If the script prints `NEXT: Use the Read tool to read data/tmp/duplicate_candidates.txt` or `FILES: N` → continue to Step 2.
 
 ---
 
 # Step 2: Read candidates and make decisions
 
-Read `data/tmp/duplicate_candidates.txt` using the Read tool. Review every GROUP.
+Read the candidate file using the Read tool. Use the **Candidate file** path from your prompt if provided; otherwise read `data/tmp/duplicate_candidates.txt`. If the file is large, use `offset` and `limit` to read in chunks.
+
+Review every GROUP.
 
 For each group, decide: **merge** or **skip**.
 
@@ -57,7 +73,7 @@ The recommended canonical is shown for each group. Accept it unless another pape
 
 # Step 3: Write resolution decisions
 
-**First read `data/tmp/duplicate_resolved.txt`** (error if missing is fine). Then write the file:
+**First read the output file** (error if missing is fine). Use the **Output file** path from your prompt if provided; otherwise use `data/tmp/duplicate_resolved.txt`. Then write the file:
 
 ```
 # Duplicate resolution decisions
@@ -76,6 +92,8 @@ Rules:
 
 # Step 4: Apply decisions
 
+**Skip this step if your prompt says "Skip Step 4".**
+
 ```bash
 .venv/bin/python3 scripts/build/apply_duplicates.py
 ```
@@ -88,7 +106,7 @@ When you see this, immediately stop and report your summary (groups reviewed, gr
 
 ## STOP
 
-**You are done when `apply_duplicates.py` prints `STOP — duplicate resolution complete.`**
+**You are done when `apply_duplicates.py` prints `STOP — duplicate resolution complete.`** (or when you finish Step 3 if told to skip Step 4).
 
 Immediately stop. Do not run any further commands.
 

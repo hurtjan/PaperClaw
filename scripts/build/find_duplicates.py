@@ -4,12 +4,14 @@ Detect potential duplicate papers in data/db/papers.json using
 shared authors and shared citation signals.
 
 Usage:
-  .venv/bin/python3 scripts/build/find_duplicates.py [--threshold N] [--limit N] [--json]
-  --threshold   Minimum combined score to report (default: 4.0)
-  --limit       Max groups to output (default: 50)
-  --json        JSON-only output (no human-readable summary)
+  .venv/bin/python3 scripts/build/find_duplicates.py [--threshold N] [--limit N] [--max-group-size N] [--json]
+  --threshold        Minimum combined score to report (default: 4.0)
+  --limit            Max groups to output (default: 50)
+  --max-group-size   Max papers per group; larger groups are split (default: 10)
+  --json             JSON-only output (no human-readable summary)
 
 Output: data/tmp/duplicate_candidates.json
+        data/tmp/duplicate_candidates.txt (or _1.txt, _2.txt, ... if split)
 """
 
 import argparse
@@ -26,6 +28,9 @@ from litdb import normalize_author_lastname, export_json
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 OUTPUT_FILE = ROOT / "data" / "tmp" / "duplicate_candidates.json"
 TXT_OUTPUT_FILE = ROOT / "data" / "tmp" / "duplicate_candidates.txt"
+
+MAX_TXT_SIZE = 60 * 1024  # 60KB per TXT file
+MAX_PAIRWISE_TXT = 20  # max pairwise entries per group in TXT output
 
 # Type priority for canonical selection: higher = preferred
 TYPE_PRIORITY = {"owned": 3, "external_owned": 2, "stub": 1}
@@ -51,19 +56,15 @@ def get_first_author_key(paper: dict) -> str | None:
 
 
 def compute_author_jaccard(set_a: set, set_b: set) -> float:
-    """Compute Jaccard similarity between two author lastname sets."""
     if not set_a or not set_b:
         return 0.0
-    union = set_a | set_b
-    return len(set_a & set_b) / len(union)
+    return len(set_a & set_b) / len(set_a | set_b)
 
 
 def compute_citation_jaccard(set_a: set, set_b: set) -> float:
-    """Compute Jaccard similarity between two citation ID sets."""
     if not set_a or not set_b:
         return 0.0
-    union = set_a | set_b
-    return len(set_a & set_b) / len(union)
+    return len(set_a & set_b) / len(set_a | set_b)
 
 
 def score_pair(a: dict, b: dict,
@@ -158,6 +159,63 @@ class UnionFind:
             self.parent[ry] = rx
 
 
+def split_oversized_group(pids_set: set, pair_score_map: dict,
+                          threshold: float, max_size: int) -> list[set]:
+    """Split an oversized group into smaller dense subgroups.
+
+    Greedily extracts cliques starting from the highest-scoring pair,
+    expanding with papers connected to all current members above threshold.
+    Remaining loosely-connected papers form their own small groups or are
+    dropped if they have no above-threshold connections left.
+    """
+    pids = sorted(pids_set)
+
+    # Build adjacency with scores for pairs above threshold
+    adj: dict[str, dict[str, float]] = {pid: {} for pid in pids}
+    for i in range(len(pids)):
+        for j in range(i + 1, len(pids)):
+            pair = frozenset([pids[i], pids[j]])
+            if pair in pair_score_map:
+                score = pair_score_map[pair]["score"]
+                adj[pids[i]][pids[j]] = score
+                adj[pids[j]][pids[i]] = score
+
+    subgroups = []
+    remaining = set(pids)
+
+    while remaining:
+        # Find highest-scoring pair among remaining papers
+        best_pair = None
+        best_score = -1
+        for pid in remaining:
+            for neighbor, score in adj.get(pid, {}).items():
+                if neighbor in remaining and score > best_score:
+                    best_score = score
+                    best_pair = (pid, neighbor)
+
+        if best_pair is None or best_score < threshold:
+            break
+
+        # Start clique from best pair
+        clique = set(best_pair)
+
+        # Expand: add papers connected to ALL current members above threshold
+        for candidate in sorted(remaining - clique):
+            if len(clique) >= max_size:
+                break
+            if all(
+                adj.get(member, {}).get(candidate, 0) >= threshold
+                for member in clique
+            ):
+                clique.add(candidate)
+
+        if len(clique) >= 2:
+            subgroups.append(clique)
+        remaining -= clique
+
+    return subgroups
+
+
 def select_canonical(papers: dict, paper_ids: list) -> str:
     """
     Choose the canonical paper from a group.
@@ -195,86 +253,192 @@ def build_paper_summary(paper: dict) -> dict:
     }
 
 
-def format_candidates_txt(result: dict) -> str:
-    """Render duplicate groups as human-readable text for agent review."""
+def format_group_txt(group: dict) -> str:
+    """Render a single duplicate group as slim human-readable text."""
     lines = []
-    generated = result["generated"]
-    threshold = result["threshold"]
-    groups = result["groups"]
-    n_groups = len(groups)
-
-    lines.append("=== DUPLICATE GROUPS ===")
-    lines.append(f"# Generated: {generated} | Threshold: {threshold} | Groups: {n_groups}")
-
-    if not groups:
-        lines.append("")
-        lines.append("No duplicate groups found.")
-        return "\n".join(lines)
-
     letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-    for group in groups:
-        group_id = group["group_id"]
-        confidence = group["confidence"].upper()
-        papers_in_group = group["papers"]
-        pairwise = group["pairwise_scores"]
-        canonical_id = group["recommended_canonical"]
+    group_id = group["group_id"]
+    confidence = group["confidence"].upper()
+    papers_in_group = group["papers"]
+    pairwise = group["pairwise_scores"]
+    canonical_id = group["recommended_canonical"]
+    max_score = max((p["score"] for p in pairwise), default=0.0)
 
-        max_score = max((p["score"] for p in pairwise), default=0.0)
+    lines.append(
+        f"--- GROUP {group_id} ({confidence} confidence, max score: {max_score}) ---"
+    )
+    lines.append(f"Recommended canonical: {canonical_id}")
+    lines.append("")
 
-        lines.append("")
-        lines.append(
-            f"--- GROUP {group_id} ({confidence} confidence, max score: {max_score}) ---"
+    # Build paper lookup for stub annotations
+    paper_info: dict[str, dict] = {}
+    paper_to_letter: dict[str, str] = {}
+    for idx, paper in enumerate(papers_in_group):
+        letter = letters[idx] if idx < len(letters) else str(idx + 1)
+        paper_to_letter[paper["id"]] = letter
+        paper_info[paper["id"]] = paper
+
+        authors_str = (
+            ", ".join(str(a) for a in paper.get("authors", [])) or "(unknown)"
         )
-        lines.append(f"Recommended canonical: {canonical_id}")
+        doi_str = paper.get("doi") or "(none)"
+        year_str = str(paper.get("year", "")) if paper.get("year") else "(unknown)"
+        title = paper.get("title") or "(no title)"
+
+        lines.append(f"  Paper {letter}: {paper['id']}")
+        lines.append(f'    Title: "{title}"')
+        lines.append(f"    Authors: {authors_str}")
+        lines.append(
+            f"    Year: {year_str} | Type: {paper.get('type', 'unknown')} "
+            f"| DOI: {doi_str}"
+        )
+        lines.append(
+            f"    Cites: {paper.get('cites_count', 0)} "
+            f"| Cited by: {paper.get('cited_by_count', 0)}"
+        )
         lines.append("")
 
-        paper_to_letter: dict[str, str] = {}
-        for idx, paper in enumerate(papers_in_group):
-            letter = letters[idx] if idx < len(letters) else str(idx + 1)
-            paper_to_letter[paper["id"]] = letter
+    # Pairwise — capped at MAX_PAIRWISE_TXT, sorted by score desc
+    sorted_pairwise = sorted(pairwise, key=lambda p: -p["score"])
+    shown = sorted_pairwise[:MAX_PAIRWISE_TXT]
+    truncated = len(sorted_pairwise) - len(shown)
 
-            authors_str = (
-                ", ".join(str(a) for a in paper.get("authors", [])) or "(unknown)"
-            )
-            doi_str = paper.get("doi") or "(none)"
-            year_str = str(paper.get("year", "")) if paper.get("year") else "(unknown)"
-            title = paper.get("title") or "(no title)"
+    for pw in shown:
+        a_letter = paper_to_letter.get(pw["a"], pw["a"])
+        b_letter = paper_to_letter.get(pw["b"], pw["b"])
+        signals = ", ".join(pw["signals"]) if pw["signals"] else "(none)"
+        lines.append(
+            f"  Pairwise: {a_letter}-{b_letter} score={pw['score']} "
+            f"signals=[{signals}]"
+        )
 
-            lines.append(f"  Paper {letter}: {paper['id']}")
-            lines.append(f"    Title: \"{title}\"")
-            lines.append(f"    Authors: {authors_str}")
-            lines.append(
-                f"    Year: {year_str} | Type: {paper.get('type', 'unknown')} "
-                f"| DOI: {doi_str}"
-            )
-            lines.append(
-                f"    Cites: {paper.get('cites_count', 0)} "
-                f"| Cited by: {paper.get('cited_by_count', 0)}"
-            )
-            lines.append("")
+        # Shared authors (always show names — short list)
+        authors_part = (
+            ", ".join(pw["shared_authors"]) if pw["shared_authors"] else "(none)"
+        )
 
-        for pw in pairwise:
-            a_letter = paper_to_letter.get(pw["a"], pw["a"])
-            b_letter = paper_to_letter.get(pw["b"], pw["b"])
-            signals = ", ".join(pw["signals"]) if pw["signals"] else "(none)"
-            lines.append(
-                f"  Pairwise: {a_letter}-{b_letter} score={pw['score']} "
-                f"signals=[{signals}]"
-            )
-            if pw["shared_authors"]:
-                lines.append(f"    Shared authors: {', '.join(pw['shared_authors'])}")
-            if pw["shared_citers"]:
-                lines.append(f"    Shared citers: {', '.join(pw['shared_citers'])}")
-            if pw["shared_cites"]:
-                lines.append(f"    Shared cites: {', '.join(pw['shared_cites'])}")
-            lines.append(
-                f"    Author Jaccard: {pw['author_jaccard']:.3f} "
-                f"| Cited-by Jaccard: {pw['cited_by_jaccard']:.3f}"
-            )
-            lines.append("")
+        # Shared citers — count only, with stub annotation
+        a_info = paper_info.get(pw["a"], {})
+        b_info = paper_info.get(pw["b"], {})
+        a_cited_by = a_info.get("cited_by_count", 0)
+        b_cited_by = b_info.get("cited_by_count", 0)
+
+        if a_cited_by == 0:
+            citers_part = f"n/a ({a_letter} has no cited_by)"
+        elif b_cited_by == 0:
+            citers_part = f"n/a ({b_letter} has no cited_by)"
+        else:
+            citers_part = str(len(pw["shared_citers"]))
+
+        # Shared cites — count only, with stub annotation
+        a_cites = a_info.get("cites_count", 0)
+        b_cites = b_info.get("cites_count", 0)
+
+        if a_cites == 0:
+            cites_part = f"n/a ({a_letter} has no cites)"
+        elif b_cites == 0:
+            cites_part = f"n/a ({b_letter} has no cites)"
+        else:
+            cites_part = str(len(pw["shared_cites"]))
+
+        lines.append(
+            f"    Shared authors: {authors_part} "
+            f"| Shared citers: {citers_part} "
+            f"| Shared cites: {cites_part}"
+        )
+        lines.append(
+            f"    Author Jaccard: {pw['author_jaccard']:.3f} "
+            f"| Cited-by Jaccard: {pw['cited_by_jaccard']:.3f}"
+        )
+        lines.append("")
+
+    if truncated > 0:
+        lines.append(f"  ... and {truncated} more pairs (see JSON for full list)")
+        lines.append("")
 
     return "\n".join(lines)
+
+
+def write_txt_output(result: dict) -> list[Path]:
+    """Write TXT output files, splitting if total exceeds MAX_TXT_SIZE.
+
+    Returns list of written file paths.
+    """
+    groups = result["groups"]
+    generated = result["generated"]
+    threshold = result["threshold"]
+    total_groups = len(groups)
+    txt_dir = TXT_OUTPUT_FILE.parent
+
+    # Clean up old numbered files from previous runs
+    for old in txt_dir.glob("duplicate_candidates_*.txt"):
+        old.unlink()
+
+    txt_dir.mkdir(parents=True, exist_ok=True)
+
+    if not groups:
+        content = (
+            f"=== DUPLICATE GROUPS ===\n"
+            f"# Generated: {generated} | Threshold: {threshold} | Groups: 0\n\n"
+            f"No duplicate groups found.\n"
+        )
+        TXT_OUTPUT_FILE.write_text(content)
+        return [TXT_OUTPUT_FILE]
+
+    # Format each group individually
+    group_texts = [format_group_txt(g) for g in groups]
+
+    # Try single file first
+    header = (
+        f"=== DUPLICATE GROUPS ===\n"
+        f"# Generated: {generated} | Threshold: {threshold} | Groups: {total_groups}"
+    )
+    full_content = header + "\n\n" + "\n".join(group_texts)
+
+    if len(full_content.encode("utf-8")) <= MAX_TXT_SIZE:
+        TXT_OUTPUT_FILE.write_text(full_content)
+        return [TXT_OUTPUT_FILE]
+
+    # Need to split into multiple files
+    # Remove the single file if it exists from a previous run
+    if TXT_OUTPUT_FILE.exists():
+        TXT_OUTPUT_FILE.unlink()
+
+    # Bin groups into files, each under MAX_TXT_SIZE
+    bins: list[list[str]] = []
+    current_bin: list[str] = []
+    current_size = 0
+    header_estimate = 200  # bytes reserved for per-file header
+
+    for group_text in group_texts:
+        text_size = len(group_text.encode("utf-8"))
+        if current_bin and current_size + text_size + header_estimate > MAX_TXT_SIZE:
+            bins.append(current_bin)
+            current_bin = []
+            current_size = 0
+        current_bin.append(group_text)
+        current_size += text_size
+
+    if current_bin:
+        bins.append(current_bin)
+
+    # Write each file with its own header
+    written: list[Path] = []
+    total_parts = len(bins)
+    for part_num, part_texts in enumerate(bins, 1):
+        n_in_part = len(part_texts)
+        file_header = (
+            f"=== DUPLICATE GROUPS (Part {part_num} of {total_parts}) ===\n"
+            f"# Generated: {generated} | Threshold: {threshold} "
+            f"| Groups in this file: {n_in_part} (of {total_groups} total)"
+        )
+        content = file_header + "\n\n" + "\n".join(part_texts)
+        path = txt_dir / f"duplicate_candidates_{part_num}.txt"
+        path.write_text(content)
+        written.append(path)
+
+    return written
 
 
 def main():
@@ -283,6 +447,8 @@ def main():
                         help="Minimum score to report (default: 4.0)")
     parser.add_argument("--limit", type=int, default=50,
                         help="Max groups to output (default: 50)")
+    parser.add_argument("--max-group-size", type=int, default=10,
+                        help="Max papers per group; larger groups are split (default: 10)")
     parser.add_argument("--json", action="store_true",
                         help="JSON-only output (no human-readable summary)")
     args = parser.parse_args()
@@ -362,10 +528,21 @@ def main():
         groups_by_root[root].add(pr["a"])
         groups_by_root[root].add(pr["b"])
 
+    # Split oversized groups into dense subgroups
+    final_groups: list[set] = []
+    for root, pids_set in groups_by_root.items():
+        if len(pids_set) > args.max_group_size:
+            subgroups = split_oversized_group(
+                pids_set, pair_score_map, args.threshold, args.max_group_size
+            )
+            final_groups.extend(subgroups)
+        else:
+            final_groups.append(pids_set)
+
     # Build output groups
     output_groups: list[dict] = []
 
-    for root, pids_set in groups_by_root.items():
+    for pids_set in final_groups:
         pids = sorted(pids_set)
         canonical_id = select_canonical(papers, pids)
 
@@ -416,14 +593,14 @@ def main():
         "groups": output_groups,
     }
 
+    # Write JSON (always single file, unchanged)
     output_file = OUTPUT_FILE
     output_file.parent.mkdir(parents=True, exist_ok=True)
     export_json(result, output_file, track=False)
 
-    # Write txt output for agent-mediated review
-    txt_content = format_candidates_txt(result)
-    TXT_OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TXT_OUTPUT_FILE.write_text(txt_content)
+    # Write TXT output (may split into multiple files)
+    txt_files = write_txt_output(result)
+    n_files = len(txt_files)
 
     if not args.json:
         high = sum(1 for g in output_groups if g["confidence"] == "high")
@@ -433,9 +610,9 @@ def main():
         print(f"  Medium confidence: {medium}")
         print(f"Output: {output_file}")
         if output_groups:
-            print("NEXT: Use the Read tool to read data/tmp/duplicate_candidates.txt")
+            print(f"FILES: {n_files}")
     else:
-        print(json.dumps({"groups_found": len(output_groups)}, indent=2))
+        print(json.dumps({"groups_found": len(output_groups), "files": n_files}, indent=2))
 
     sys.exit(2 if output_groups else 0)
 
