@@ -83,7 +83,7 @@ The script handles:
 
 ### Step 4b — Agent review (only if NEEDS_JUDGMENT entries exist)
 
-Invoke the `author-resolver` agent to review `data/tmp/author_candidates.json` and write `data/tmp/author_resolved.json`.
+Invoke the `author-resolver` agent to review `data/tmp/author_candidates.txt` and write `data/tmp/author_resolved.txt`.
 
 ### Step 4c — Apply author decisions
 

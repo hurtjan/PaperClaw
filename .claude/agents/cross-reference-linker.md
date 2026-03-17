@@ -82,7 +82,7 @@ The script will print: `DONE — paper linked successfully. NEXT: Run .venv/bin/
 ## Step 5: Run author candidate ranking
 
 ```bash
-.venv/bin/python3 scripts/link/link_authors.py
+.venv/bin/python3 scripts/link/link_authors.py --paper {id}
 ```
 
 - If it prints `No new papers to process. STOP — pipeline complete.` → **immediately stop**. Report summary and do nothing else.

@@ -214,12 +214,17 @@ def main():
             accepted.append((pdf_path.name, external_match["id"] if external_match else None))
             continue
 
-        # Write text
+        # Write text — rename to paper_id if adopting
+        if external_match:
+            text_path = TEXT_DIR / f"{external_match['id']}.txt"
         text_path.write_text(text, encoding="utf-8")
         print(f"  Text saved: {text_path}")
 
-        # Move PDF to storage
-        storage_path = STORAGE_DIR / pdf_path.name
+        # Move PDF to storage — rename to paper_id if adopting
+        if external_match:
+            storage_path = STORAGE_DIR / f"{external_match['id']}.pdf"
+        else:
+            storage_path = STORAGE_DIR / pdf_path.name
         shutil.move(str(pdf_path), str(storage_path))
         print(f"  PDF moved: {storage_path}")
 

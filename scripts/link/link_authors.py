@@ -143,17 +143,9 @@ def format_author_candidates_txt(new_paper_ids, auto_matched_map, batch_grouped_
         cand = entry["candidate"]
         score_str = f"score: {cand['score']}, {'+'.join(cand['signals'])}"
         papers_str = ", ".join(entry["paper_ids"])
-        lines.append(f"{entry['author_string']} (papers: {papers_str}) -> {cand['author_id']} [{score_str}]")
         person = existing_persons.get(cand["author_id"])
-        if person:
-            variants_str = " | ".join(person.get("name_variants", [])) + f" | {person.get('paper_count', 0)} papers"
-            lines.append(f"  Variants: {variants_str}")
-            coauthor_names = resolve_coauthors(person.get("coauthors", []))
-            if coauthor_names:
-                lines.append(f"  Coauthors: {'; '.join(coauthor_names)}")
-            venues = get_venues(person)
-            if venues:
-                lines.append(f"  Venues: {', '.join(venues)}")
+        paper_count = f" ({person.get('paper_count', 0)} papers)" if person else ""
+        lines.append(f"{entry['author_string']} (papers: {papers_str}) -> {cand['author_id']} [{score_str}]{paper_count}")
     lines.append("")
 
     # ── BATCH_GROUPED ─────────────────────────────────────────────────────────
@@ -185,7 +177,11 @@ def format_author_candidates_txt(new_paper_ids, auto_matched_map, batch_grouped_
             lines.append(f"  Candidate {i}: {cand['canonical_name']} ({author_id}) [{score_str}]")
             person = existing_persons.get(author_id)
             if person:
-                variants_str = " | ".join(person.get("name_variants", [])) + f" | {person.get('paper_count', 0)} papers"
+                variants = person.get("name_variants", [])
+                if len(variants) > 5:
+                    variants_str = " | ".join(variants[:5]) + f" | +{len(variants)-5} more | {person.get('paper_count', 0)} papers"
+                else:
+                    variants_str = " | ".join(variants) + f" | {person.get('paper_count', 0)} papers"
                 lines.append(f"    Variants: {variants_str}")
 
                 cand_coauthor_names = set()
@@ -205,11 +201,11 @@ def format_author_candidates_txt(new_paper_ids, auto_matched_map, batch_grouped_
                 else:
                     lines.append(f"    Coauthor overlap: (none)")
 
-                other_names = resolve_coauthors(non_overlap_ids)
+                other_names = resolve_coauthors(non_overlap_ids, max_n=3)
                 if other_names:
                     lines.append(f"    Other coauthors: {'; '.join(other_names)}")
 
-                venues = get_venues(person)
+                venues = get_venues(person, max_venues=3)
                 if venues:
                     lines.append(f"    Venues: {', '.join(venues)}")
     lines.append("")

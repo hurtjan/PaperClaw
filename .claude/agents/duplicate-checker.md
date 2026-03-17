@@ -45,6 +45,21 @@ After all entries:
 - If any are NOT A DUPLICATE: tell the user to re-run `ingest.py --force` on that specific PDF (or move it back manually)
 - If any are UNCERTAIN: describe what additional information would resolve it
 
+## Incomplete extraction detection
+
+For each DUPLICATE verdict, check the `extraction_meta` field in the match object:
+- If `extraction_meta` is absent, or `passes_completed` has fewer than 4 entries (missing any of 1, 2, 3, 4), the existing DB entry is **incomplete**.
+- In that case, append this note after the Verdict/Reason block:
+
+```
+Extraction status: Incomplete (passes completed: [X] / missing: [Y, Z])
+→ Recommendation: This paper is already in the DB but has incomplete extractions.
+  Remove the PDF from pdf-staging/ (it's already stored at data/pdfs/),
+  then re-run the missing extraction passes on the existing entry.
+```
+
+- If `extraction_meta` is present and `passes_completed` contains all 4 passes, no special note is needed — standard "remove from staging" advice applies.
+
 ## Rules
 
 - Do NOT read `db/papers.json` — the existing paper's metadata is already in the JSON file
