@@ -194,6 +194,7 @@ def main():
         cwd=ROOT, capture_output=True, text=True
     )
     print(result.stdout.strip())
+    print("\nDONE — paper linked successfully. NEXT: Run .venv/bin/python3 scripts/link/link_authors.py")
 
 
 if __name__ == "__main__":

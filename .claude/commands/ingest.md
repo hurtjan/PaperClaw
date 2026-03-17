@@ -162,13 +162,51 @@ For large papers, run `.venv/bin/python3 scripts/ingest/split_paper.py` to split
 
 ## Phase 3 — Linking
 
-For each newly extracted paper, sequentially:
+For each newly extracted paper, sequentially run the `cross-reference-linker` agent with the extraction ID. The agent executes these steps internally:
 
-1. Run the `cross-reference-linker` agent with the extraction ID — it handles candidate ranking, match decisions, `apply_link.py`, and author linking.
+**Step 1 — Citation candidate ranking** (Bash)
+
+`.venv/bin/python3 scripts/link/link_paper.py data/extractions/{id}.json`
+
+- Reads: `data/extractions/{id}.json`, `data/db/papers.json`
+- Writes: `data/tmp/link_candidates.txt`
+
+**Step 2 — Agent reviews candidates and writes decisions**
+
+- Reads: `data/tmp/link_candidates.txt`
+- Writes: `data/tmp/link_resolved.txt`
+
+**Step 3 — Apply link decisions** (Bash)
+
+`.venv/bin/python3 scripts/link/apply_link.py`
+
+- Reads: `data/tmp/link_resolved.txt`, `data/extractions/{id}.json`, `data/db/papers.json`
+- Writes: `data/db/papers.json`, `data/db/contexts.json` (via `build_index.py`), patches to `data/db_history/`
+- Side effect: runs `scripts/build/check_db.py` consistency check
+
+**Step 4 — Author candidate ranking** (Bash)
+
+`.venv/bin/python3 scripts/link/link_authors.py`
+
+- Reads: `data/db/papers.json`, `data/db/authors.json`
+- Writes: `data/tmp/author_candidates.json`, `data/tmp/author_candidates.txt`
+- If "No new papers to process" → skip to Phase 4
+
+**Step 5 — Agent reviews author candidates and writes decisions**
+
+- Reads: `data/tmp/author_candidates.txt`
+- Writes: `data/tmp/author_resolved.txt`
+
+**Step 6 — Apply author decisions** (Bash)
+
+`.venv/bin/python3 scripts/link/apply_authors.py`
+
+- Reads: `data/tmp/author_candidates.json`, `data/tmp/author_resolved.txt`, `data/db/papers.json`, `data/db/authors.json`
+- Writes: `data/db/authors.json`, patches to `data/db_history/`
 
 **Key constraint:** The `cross-reference-linker` agent runs sequentially (one paper at a time, NOT parallel).
 
-**Paths:** `data/extractions/` (input), `data/tmp/` (intermediaries), `data/db/papers.json`, `data/db/authors.json`
+**Paths:** `data/extractions/` (input), `data/tmp/` (intermediaries), `data/db/papers.json`, `data/db/authors.json`, `data/db/contexts.json`
 
 ---
 
@@ -195,4 +233,3 @@ Note: `apply_link.py` (Phase 3) already rebuilds the context index and runs the 
 | `paper-extractor-analysis` | Haiku | yes | Pass 3: methodology, claims, topics |
 | `paper-extractor-sections` | Haiku | yes | Pass 4: section headings, summaries, annotated text |
 | `cross-reference-linker` | Haiku | **no** | Full incremental linking pipeline |
-| `author-resolver` | Haiku | **no** | Author entity linking |

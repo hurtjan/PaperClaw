@@ -14,7 +14,8 @@ Given a text file path and a paper ID:
 
 1. **Read the full text file**
 2. **Extract the `sections` array** — one entry per major section of the paper
-3. **Write output to `data/extractions/{paper_id}.sections.json`** — containing only the `sections` array
+3. **Before writing**, read `data/extractions/{paper_id}.sections.json` if it exists.
+4. **Write output to `data/extractions/{paper_id}.sections.json`** — containing only the `sections` array
 4. **Print DONE line**
 
 ## Output Schema

@@ -217,6 +217,7 @@ def main():
     print(f"  New (no candidates): {len(new_citations)}")
     print(f"  Version candidates: {len(version_candidates)}")
     print(f"Written to {OUTPUT_FILE}")
+    print("NEXT: Use the Read tool to read data/tmp/link_candidates.txt")
 
 
 if __name__ == "__main__":

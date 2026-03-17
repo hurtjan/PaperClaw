@@ -18,16 +18,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from litdb import export_json
 
 CANDIDATES_FILE = ROOT / "data" / "tmp" / "author_candidates.json"
-RESOLVED_FILE = ROOT / "data" / "tmp" / "author_resolved.json"
+RESOLVED_FILE = ROOT / "data" / "tmp" / "author_resolved.txt"
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 AUTHORS_FILE = ROOT / "data" / "db" / "authors.json"
+
+
+def parse_resolved_txt(path):
+    """Parse author_resolved.txt, returning (decisions, overrides) dicts."""
+    decisions = {}
+    overrides = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("OVERRIDE:"):
+                rest = line[len("OVERRIDE:"):].strip()
+                parts = rest.split(" -> ", 1)
+                if len(parts) == 2:
+                    overrides[parts[0].strip()] = parts[1].strip()
+            else:
+                parts = line.split(" -> ", 1)
+                if len(parts) == 2:
+                    decisions[parts[0].strip()] = parts[1].strip()
+    return decisions, overrides
 
 
 def main():
     with open(CANDIDATES_FILE) as f:
         candidates = json.load(f)
-    with open(RESOLVED_FILE) as f:
-        resolved = json.load(f)
+    decisions, overrides = parse_resolved_txt(RESOLVED_FILE)
     with open(PAPERS_FILE) as f:
         papers = json.load(f)["papers"]
 
@@ -41,8 +61,6 @@ def main():
     institutions = authors_data.get("institutions", {})
     processed = set(authors_data.get("processed_papers", []))
 
-    decisions = resolved.get("decisions", {})
-    overrides = resolved.get("overrides", {})
     new_paper_ids = candidates["new_paper_ids"]
 
     author_map = {}
@@ -140,6 +158,7 @@ def main():
     export_json(authors_data, AUTHORS_FILE,
                 description=f"authors: {created} created, {updated} updated")
     print(f"Updated: {updated}, Created: {created}, Total: {len(persons)} persons, {len(institutions)} institutions")
+    print("DONE — authors linked successfully. STOP — pipeline complete.")
 
 
 if __name__ == "__main__":

@@ -23,7 +23,8 @@ You extract **citation contexts** from a paper's text. You are given:
    - Extract a **quote** (the sentence containing the citation)
    - Write an **explanation** (1-2 sentences on why the author cites this work)
 3. A citation may appear multiple times → create one context per appearance
-4. **Output path:** Write output to `data/extractions/{paper_id}.contexts.json` ONLY. Do NOT modify `data/extractions/{paper_id}.json`.
+4. **Before writing**, read `data/extractions/{paper_id}.contexts.json` if it exists.
+5. **Output path:** Write output to `data/extractions/{paper_id}.contexts.json` ONLY. Do NOT modify `data/extractions/{paper_id}.json`.
 
 ## Output Schema
 

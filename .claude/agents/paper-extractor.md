@@ -23,7 +23,8 @@ Given a text file path and optionally a paper ID:
    - Compound last names: `van_der_ploeg`
    - Org authors: `iea`, `ipcc`
 4. **Extract ALL citations** from the reference list — bibliographic fields only
-5. **Write JSON** to `data/extractions/{paper_id}.json`
+5. **Before writing**, read `data/extractions/{paper_id}.json` if it exists (it may remain from a prior failed attempt).
+6. **Write JSON** to `data/extractions/{paper_id}.json`
 6. **Print DONE line**
 
 ## Output Schema

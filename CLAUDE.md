@@ -16,6 +16,10 @@ Agents comprehend, Python computes. Agents never read `data/db/papers.json`, `da
 
 Always invoke agents via the Agent tool, never via Bash.
 
+### Fuzzy matching handoff
+
+Python scores similarity and writes ranked candidates to `data/tmp/`. An agent reviews every candidate set — even singletons — and writes match decisions back to `data/tmp/`. Python reads decisions and applies DB writes.
+
 ### Output style
 
 Always show full paper title at least once. Use (Author, Year) for short mentions — never internal paper IDs in user-facing output.

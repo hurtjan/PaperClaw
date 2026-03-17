@@ -258,7 +258,7 @@ def main():
         new_paper_ids = list(papers.keys())
 
     if not new_paper_ids:
-        print("No new papers to process.")
+        print("No new papers to process. STOP — pipeline complete.")
         return
 
     print(f"Processing {len(new_paper_ids)} paper(s) against {len(existing_persons)} existing authors")
@@ -402,6 +402,8 @@ def main():
 
     print(f"Auto: {len(auto_matched_map)}, Batch-grouped: {len(batch_grouped_map)}, "
           f"Judgment: {len(needs_judgment_map)}, New: {len(new_authors_map)}")
+    print(f"Written to {TXT_OUTPUT_FILE}")
+    print("NEXT: Use the Read tool to read data/tmp/author_candidates.txt")
 
 
 if __name__ == "__main__":

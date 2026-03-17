@@ -21,7 +21,8 @@ You extract **citation contexts** from a paper's text. You are given:
    - If the paper uses numbered references (e.g. `[1]`, `[2]`), match them to refs entries using the `citation_key` field (e.g. `"citation_key": "1"` maps `[1]` to that entry's `id`).
 2. For each citation that appears in the text, identify: section, purpose, quote (sentence containing the citation), and explanation (1-2 sentences).
 3. A citation may appear multiple times → create one context per appearance.
-4. **Output path:** Write output to `data/extractions/{paper_id}.contexts.json` ONLY. Do NOT modify `data/extractions/{paper_id}.json`.
+4. **Before writing**, read `data/extractions/{paper_id}.contexts.json` if it exists.
+5. **Output path:** Write output to `data/extractions/{paper_id}.contexts.json` ONLY. Do NOT modify `data/extractions/{paper_id}.json`.
 
 ## Output Schema
 

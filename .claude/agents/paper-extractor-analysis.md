@@ -19,7 +19,8 @@ Given a text file path and a paper ID:
    - `claims`: list of key findings or contributions the paper makes
    - `keywords`: list of domain keywords (draw from abstract, keywords section, and body)
    - `topics`: primary and secondary topic categories
-3. **Write output to `data/extractions/{paper_id}.analysis.json`** — containing only the 5 fields above
+3. **Before writing**, read `data/extractions/{paper_id}.analysis.json` if it exists.
+4. **Write output to `data/extractions/{paper_id}.analysis.json`** — containing only the 5 fields above
 4. **Print DONE line**
 
 ## Output Schema
