@@ -36,9 +36,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from litdb import (PaperIndex, find_candidates_indexed, normalize_doi, export_json,
+from litdb import (PaperIndex, normalize_doi, export_json,
                    TITLE_STOP_WORDS, transliterate, normalize_title, derive_author_lastnames,
                    is_owned, generate_paper_id)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "build"))
+from find_matches import find_candidates_indexed
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 S2_FETCH_LOG = ROOT / "data" / "db" / "s2_fetch_log.json"

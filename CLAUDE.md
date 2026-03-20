@@ -12,7 +12,7 @@ Literature database system that transforms your paper-library into a cross-refer
 
 ### Agent vs. Python responsibilities
 
-Agents comprehend, Python computes. Agents never read `data/db/papers.json`, `data/db/authors.json`, or `data/db/contexts.json` directly (too large). All writes go through `apply_link.py` / `apply_authors.py`.
+Agents comprehend, Python computes. Agents never read `data/db/papers.json`, `data/db/authors.json`, or `data/db/contexts.json` directly (too large). All writes go through Python apply scripts (`apply_duplicates.py`, `apply_authors.py`, `add_paper.py`).
 
 Always invoke agents via the Agent tool, never via Bash.
 
@@ -50,7 +50,7 @@ All writes to `papers.json`, `authors.json`, and `contexts.json` are automatical
 | `/pull-citing` | Fetch papers that cite your owned papers from Semantic Scholar | User wants to discover citing papers or enrich metadata |
 | `/fetch-preprints` | Download PDFs from preprint servers (arXiv, bioRxiv, medRxiv, SSRN) | User wants to download papers from preprint servers or populate pdf-staging/ |
 | `/test` | End-to-end pipeline test using fixture PDFs | Verify pipeline works after changes, or first-time validation |
-| `/clean-db` | Find and merge duplicate papers in the DB | User wants to deduplicate the database, merge preprint/published versions, or find papers entered twice |
+| `/clean-db` | Find and merge duplicate papers, then link authors | User wants to deduplicate the database, merge preprint/published versions, link authors, or after /ingest and /merge |
 
 ## Files & Customization
 

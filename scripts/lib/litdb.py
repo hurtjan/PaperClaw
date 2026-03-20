@@ -6,8 +6,6 @@ import re
 import subprocess
 from datetime import date
 from pathlib import Path
-from rapidfuzz.fuzz import ratio as rapidfuzz_ratio
-
 import yaml
 
 OWNED_TYPES = ("owned", "external_owned")
@@ -139,62 +137,6 @@ def _raw_title_prefix(record: dict) -> str:
     return _title_prefix_fp(t)
 
 
-def score_match(a: dict, b: dict) -> tuple[int, list[str], float]:
-    """
-    Score how likely two records refer to the same work.
-    Returns (total_score, signal_list, title_similarity).
-
-    Signals:
-      exact_id      +4  — agent-generated IDs match
-      exact_doi     +4  — normalized DOIs match
-      author_year   +2  — first author lastname + year match
-      title_high    +2  — fuzzy ratio >= 0.9
-      title_mid     +1  — fuzzy ratio 0.7–0.9
-      title_prefix  +1  — 5-word prefix fingerprint matches
-    """
-    score = 0
-    signals = []
-    title_sim = 0.0
-
-    a_id = a.get("id", "")
-    b_id = b.get("id", "")
-    if a_id and b_id and a_id == b_id:
-        score += 4
-        signals.append("exact_id")
-
-    a_doi = normalize_doi(a.get("doi"))
-    b_doi = normalize_doi(b.get("doi"))
-    if a_doi and b_doi and a_doi == b_doi:
-        score += 4
-        signals.append("exact_doi")
-
-    a_ln = _get_first_lastname(a)
-    b_ln = _get_first_lastname(b)
-    a_yr = str(a.get("year", "")).strip()
-    b_yr = str(b.get("year", "")).strip()
-    if a_ln and b_ln and a_yr and b_yr and a_ln == b_ln and a_yr == b_yr:
-        score += 2
-        signals.append("author_year")
-
-    a_title = _get_title_text(a)
-    b_title = _get_title_text(b)
-    if a_title and b_title:
-        ratio = rapidfuzz_ratio(a_title, b_title) / 100.0
-        title_sim = ratio
-        if ratio >= 0.9:
-            score += 2
-            signals.append("title_high")
-        elif ratio >= 0.7:
-            score += 1
-            signals.append("title_mid")
-
-        a_fp = _title_prefix_fp(a_title)
-        b_fp = _title_prefix_fp(b_title)
-        if len(a_fp) > 8 and a_fp == b_fp and "title_high" not in signals:
-            score += 1
-            signals.append("title_prefix")
-
-    return score, signals, title_sim
 
 
 class PaperIndex:
@@ -204,6 +146,7 @@ class PaperIndex:
         self.papers = papers
         self.by_id: dict[str, dict] = {}
         self.by_doi: dict[str, list[dict]] = {}
+        self.by_s2_id: dict[str, list[dict]] = {}
         self.by_author_year: dict[tuple[str, str], list[dict]] = {}
         self.by_title_prefix: dict[str, list[dict]] = {}
 
@@ -216,6 +159,10 @@ class PaperIndex:
             if doi:
                 self.by_doi.setdefault(doi, []).append(p)
 
+            s2_id = p.get("s2_paper_id")
+            if s2_id:
+                self.by_s2_id.setdefault(s2_id, []).append(p)
+
             ln = _get_first_lastname(p)
             yr = str(p.get("year", "")).strip()
             if ln and yr:
@@ -226,79 +173,6 @@ class PaperIndex:
                 self.by_title_prefix.setdefault(fp, []).append(p)
 
 
-def find_candidates_indexed(citation: dict, index: PaperIndex, min_score: int = 1) -> list[dict]:
-    """Score one citation against papers using pre-computed indexes."""
-    candidate_ids: set[int] = set()
-    candidate_papers: list[dict] = []
-
-    def _add(p):
-        pid = id(p)
-        if pid not in candidate_ids:
-            candidate_ids.add(pid)
-            candidate_papers.append(p)
-
-    cit_id = citation.get("id", "")
-    if cit_id and cit_id in index.by_id:
-        _add(index.by_id[cit_id])
-
-    cit_doi = normalize_doi(citation.get("doi"))
-    if cit_doi and cit_doi in index.by_doi:
-        for p in index.by_doi[cit_doi]:
-            _add(p)
-
-    cit_ln = _get_first_lastname(citation)
-    cit_yr = str(citation.get("year", "")).strip()
-    if cit_ln and cit_yr and (cit_ln, cit_yr) in index.by_author_year:
-        for p in index.by_author_year[(cit_ln, cit_yr)]:
-            _add(p)
-
-    cit_fp = _raw_title_prefix(citation)
-    if len(cit_fp) > 8 and cit_fp in index.by_title_prefix:
-        for p in index.by_title_prefix[cit_fp]:
-            _add(p)
-
-    results = []
-    for p in candidate_papers:
-        s, sigs, sim = score_match(citation, p)
-        if s >= min_score:
-            results.append({
-                "id": p.get("id", ""),
-                "title": p.get("title", ""),
-                "authors": p.get("authors", []),
-                "year": p.get("year"),
-                "journal": p.get("journal"),
-                "doi": p.get("doi"),
-                "signals": sigs,
-                "title_similarity": round(sim, 3),
-                "score": s,
-            })
-
-    if not results:
-        results = find_candidates(citation, index.papers, min_score)
-
-    results.sort(key=lambda x: x["score"], reverse=True)
-    return results
-
-
-def find_candidates(citation: dict, papers: list[dict], min_score: int = 1) -> list[dict]:
-    """Score one citation against all papers (brute-force fallback)."""
-    results = []
-    for paper in papers:
-        s, sigs, sim = score_match(citation, paper)
-        if s >= min_score:
-            results.append({
-                "id": paper.get("id", ""),
-                "title": paper.get("title", ""),
-                "authors": paper.get("authors", []),
-                "year": paper.get("year"),
-                "journal": paper.get("journal"),
-                "doi": paper.get("doi"),
-                "signals": sigs,
-                "title_similarity": round(sim, 3),
-                "score": s,
-            })
-    results.sort(key=lambda x: x["score"], reverse=True)
-    return results
 
 
 _TRACKED_FILES = {"papers.json", "authors.json", "contexts.json"}

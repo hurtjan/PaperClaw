@@ -1,7 +1,7 @@
 ---
 name: duplicate-resolver
-description: "Detect and merge duplicate papers in the DB. Runs full pipeline autonomously: detection → review → apply.\n\nExamples:\n- After find_duplicates.py exits with code 2 → run this agent to review and apply merges\n- /clean-db triggers this agent to find and merge duplicates"
-tools: Read, Write, Bash(.venv/bin/python3 scripts/build/find_duplicates.py*), Bash(.venv/bin/python3 scripts/build/apply_duplicates.py*)
+description: "Detect and merge duplicate papers in the DB. Runs full pipeline autonomously: detection \u2192 review \u2192 apply.\n\nExamples:\n- After find_matches.py exits with code 2 \u2192 run this agent to review and apply merges\n- /clean-db triggers this agent to find and merge duplicates"
+tools: Read, Write, Bash(.venv/bin/python3 scripts/build/find_matches.py*), Bash(.venv/bin/python3 scripts/build/apply_duplicates.py*)
 model: haiku
 color: blue
 ---
@@ -36,18 +36,18 @@ If no directives are given, run the full pipeline (backward compatible).
 
 ---
 
-# Step 1: Run duplicate detection
+# Step 1: Run match detection
 
 **Skip this step if your prompt says "Skip Step 1".**
 
 If a `--threshold N` argument was passed to you, include it. Otherwise omit it:
 
 ```bash
-.venv/bin/python3 scripts/build/find_duplicates.py
+.venv/bin/python3 scripts/build/find_matches.py
 ```
 
 - If the script prints no NEXT directive and output says no groups found → stop immediately. Report: "No duplicate candidates found above the threshold."
-- If the script prints `NEXT: Use the Read tool to read data/tmp/duplicate_candidates.txt` or `FILES: N` → continue to Step 2.
+- If the script prints `FILES: N` → continue to Step 2.
 
 ---
 
@@ -62,7 +62,7 @@ For each group, decide: **merge** or **skip**.
 Decision rules:
 - Same title or very similar titles → merge
 - Same authors + same year + similar title → merge
-- DOI match → definite merge
+- DOI or S2 ID match → definite merge
 - Institutional author with clearly different reports/documents → skip
 - Different papers by same author (different topics or titles) → skip
 - When in doubt → skip (a wrong merge corrupts the database; a missed merge can be cleaned up later)

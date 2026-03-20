@@ -232,7 +232,7 @@ Uses the second discovered test subdir. **Skip this phase if only one test subdi
 
 29. **Run detection:**
     ```bash
-    .venv/bin/python3 scripts/build/find_duplicates.py --json
+    .venv/bin/python3 scripts/build/find_matches.py --json
     ```
     Read `data/tmp/duplicate_candidates.json`. **FAIL Phase E** if `groups_found == 0` or if the injected pair (`stub_id` + `v2_id`) is not present in any group's paper list.
 
@@ -269,7 +269,7 @@ Uses the second discovered test subdir. **Skip this phase if only one test subdi
 
 35. **Run unit tests:**
     ```bash
-    .venv/bin/python3 scripts/build/test_find_duplicates.py
+    .venv/bin/python3 scripts/build/test_find_matches.py
     .venv/bin/python3 scripts/build/test_merge_duplicates.py
     ```
     **FAIL Phase E** if either exits non-zero.

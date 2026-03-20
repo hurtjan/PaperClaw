@@ -26,8 +26,10 @@ import fitz  # PyMuPDF
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "build"))
 
-from litdb import score_match, normalize_doi
+from litdb import normalize_doi
+from find_matches import score_paper_pair
 
 STAGING_DIR = ROOT / "pdf-staging"
 STORAGE_DIR = ROOT / "data" / "pdfs"
@@ -92,7 +94,8 @@ def check_duplicate(metadata: dict, papers: dict) -> dict | None:
     best_score = 0
     best_match = None
     for pid, paper in papers.items():
-        s, sigs, sim = score_match(record, paper)
+        s, sigs, details = score_paper_pair(record, paper)
+        sim = details.get("title_similarity", 0)
         if s > best_score:
             best_score = s
             best_match = {

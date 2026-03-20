@@ -16,8 +16,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "build"))
 
-from litdb import find_candidates_indexed, PaperIndex
+from litdb import PaperIndex
+from find_matches import find_candidates_indexed
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 S2_RESULTS_FILE = ROOT / "data" / "tmp" / "s2_forward_results.json"
