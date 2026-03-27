@@ -1,12 +1,36 @@
 #!/usr/bin/env python3
 """Shared utilities for the literature database pipeline."""
 
+import gzip
 import json
 import re
 import subprocess
 from datetime import date
 from pathlib import Path
 import yaml
+
+try:
+    import orjson as _orjson
+
+    def fast_loads(data):
+        """Deserialize JSON bytes or str using orjson."""
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        return _orjson.loads(data)
+
+    def fast_dumps(obj, indent=2):
+        """Serialize to JSON string using orjson."""
+        flags = _orjson.OPT_SORT_KEYS | _orjson.OPT_NON_STR_KEYS
+        if indent:
+            flags |= _orjson.OPT_INDENT_2
+        return _orjson.dumps(obj, option=flags).decode("utf-8")
+
+except ImportError:
+    def fast_loads(data):
+        return json.loads(data)
+
+    def fast_dumps(obj, indent=2):
+        return json.dumps(obj, indent=indent, ensure_ascii=False, sort_keys=True)
 
 OWNED_TYPES = ("owned", "external_owned")
 
@@ -178,8 +202,18 @@ class PaperIndex:
 _TRACKED_FILES = {"papers.json", "authors.json", "contexts.json"}
 
 
+def load_patch_file(patch_path: Path) -> dict:
+    """Load a patch file, handling both gzipped (.json.gz) and legacy (.json) formats."""
+    patch_path = Path(patch_path)
+    if patch_path.suffix == ".gz" or patch_path.name.endswith(".json.gz"):
+        with gzip.open(patch_path, "rt", encoding="utf-8") as f:
+            return fast_loads(f.read())
+    else:
+        return fast_loads(patch_path.read_text())
+
+
 def _record_patch(path: Path, new_data, source: str, description: str | None) -> None:
-    """Compute forward/reverse JSON patches and append to data/db_history/."""
+    """Compute forward JSON patch (gzipped) and append to data/db_history/."""
     try:
         import jsonpatch
     except ImportError:
@@ -190,15 +224,15 @@ def _record_patch(path: Path, new_data, source: str, description: str | None) ->
         return  # no baseline to diff against
 
     try:
-        old_data = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+        old_data = fast_loads(path.read_text())
+    except (json.JSONDecodeError, ValueError, OSError):
         return
 
     forward = jsonpatch.make_patch(old_data, new_data)
     if not forward.patch:
         return  # no-op
 
-    reverse = jsonpatch.make_patch(new_data, old_data)
+    # No reverse patch stored — recomputed on demand during rollback
 
     ts = datetime.datetime.now(datetime.timezone.utc)
     ts_tag = ts.strftime("%Y%m%dT%H%M%S")
@@ -219,11 +253,11 @@ def _record_patch(path: Path, new_data, source: str, description: str | None) ->
     patches_dir = project_root / "data" / "db_history" / "patches"
     patches_dir.mkdir(parents=True, exist_ok=True)
 
-    patch_filename = f"{ts_tag}_{source}_{path.name}.json"
+    patch_filename = f"{ts_tag}_{source}_{path.name}.json.gz"
     patch_path = patches_dir / patch_filename
 
     patch_doc = {
-        "version": 1,
+        "version": 2,
         "timestamp": ts_iso,
         "source_script": source,
         "target_file": rel_target,
@@ -235,11 +269,10 @@ def _record_patch(path: Path, new_data, source: str, description: str | None) ->
             "patch_size_ops": n_ops,
         },
         "forward_patch": forward.patch,
-        "reverse_patch": reverse.patch,
     }
 
-    with open(patch_path, "w") as f:
-        json.dump(patch_doc, f, indent=2, ensure_ascii=False)
+    with gzip.open(patch_path, "wt", encoding="utf-8") as f:
+        f.write(fast_dumps(patch_doc))
 
     manifest_path = project_root / "data" / "db_history" / "manifest.jsonl"
     entry = {
@@ -275,7 +308,16 @@ def export_json(data, path: Path, indent: int = 2, *,
         _record_patch(path, data, source, description)
 
     with open(path, "w") as f:
-        json.dump(data, f, indent=indent, ensure_ascii=False, sort_keys=True)
+        f.write(fast_dumps(data, indent=indent))
+
+    # Also record in DuckDB WAL history (non-blocking)
+    if should_track:
+        try:
+            from db import record_change
+            desc = description or f"{source}: updated {path.name}"
+            record_change(source, desc, table_name=path.stem)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

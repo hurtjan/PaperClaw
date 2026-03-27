@@ -6,14 +6,16 @@ You are merging an external PaperClaw corpus into the local database.
 
 Arguments: $ARGUMENTS
 
-- `<source_dir>`: Path to external PaperClaw root or `data/db_imports/<name>/` directory.
-- `--name <label>`: Label for this import (defaults to source directory name).
+- `<source>`: Path to external PaperClaw root, `data/db_imports/<name>/` directory, or a `.paperclaw` archive file.
+- `--name <label>`: Label for this import (defaults to source directory/archive name).
 - `--enrich`: Enrich local papers with external metadata where local fields are missing. Upgrades local stubs to `external_owned` when external has full data.
 - `--force`: Overwrite existing `external_owned` entries from a previous import.
 
 ## What this does
 
 Imports papers from an external PaperClaw database (naive add):
+- Accepts a `.paperclaw` archive (created via `/export`) or a directory with PaperClaw DB files.
+- `.paperclaw` archives are extracted to `data/db_imports/<name>/`, extraction JSONs are copied for added papers.
 - External `owned` papers become `external_owned` (no local PDF/extraction, but full metadata).
 - External `stub`/`cited_only` papers become local `stub` entries.
 - With `--enrich`: fills in missing metadata (doi, s2_paper_id, abstract, forward_cited_by) on existing local papers from external data without overwriting local file paths or extractions.
@@ -37,7 +39,8 @@ Duplicate resolution and author linking are handled by `/clean-db` after the mer
 ```
 
 The script handles:
-- Source path resolution (tries `<source_dir>/data/db/papers.json`, falls back to `<source_dir>/papers.json`)
+- `.paperclaw` archive extraction and manifest validation
+- Source path resolution (tries `<source>/data/db/papers.json`, `<source>/db/papers.json`, falls back to `<source>/papers.json`)
 - Paper merging with type-aware logic (on ID collision: enrichment or skip)
 - Context merging (deduplicates by citing/cited pair)
 - Copying reference files to `data/db_imports/<name>/`

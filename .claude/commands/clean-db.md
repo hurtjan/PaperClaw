@@ -21,23 +21,67 @@ Detects papers that may refer to the same work but have different IDs (e.g., pre
 
 ## Argument parsing
 
-Parse `$ARGUMENTS` for an optional `--threshold N` value. If present, pass it to `find_matches.py` in Step 1.
+Parse `$ARGUMENTS` for optional values:
+- `--threshold N`: pass to `find_matches.py` in Step 1
+- `--full`: activates iterative full-scan mode (see Step 1)
+
+---
+
+## Step 0: Repair stale alias references
+
+Before detecting duplicates, resolve any stale alias references left by previous merges or imports:
+
+```bash
+.venv/bin/python3 scripts/build/repair_aliases.py
+```
+
+If it reports "No aliases to resolve", the DB is clean — continue to Step 1. Otherwise it will rewrite stale references and repair bidirectional edges. This is fast and safe (tracked + rollbackable).
 
 ---
 
 ## Step 1: Run match detection
 
-Run the detection script **directly** (not inside an agent):
+`find_matches.py` applies auto-merges during this step (pairs with S2 ID or DOI match AND title similarity > 90%).
+
+### Normal mode (no `--full`)
 
 ```bash
 .venv/bin/python3 scripts/build/find_matches.py [--threshold N if specified]
 ```
 
-`find_matches.py` applies auto-merges directly during this step (pairs with S2 ID or DOI match AND title similarity > 90%).
-
 Check the exit code and output:
 - **Exit code 0** (no groups found): Report auto-merge results (if any) and "No judgment groups remaining." Suggest `--threshold 2.0` for a broader search. **Skip to Step 3.**
 - **Exit code 2** (groups found): Parse the stdout for a `FILES: N` line. This tells you how many TXT files were generated. Continue to Step 2.
+
+### `--full` mode — iterative batched scan
+
+Scores ALL pairs regardless of `dedup_pending`, processes them in ranked batches of 50 (highest-score first). Stops when a batch produces fewer than 5 merges — at that point the DB is clean at this score level.
+
+**On the first iteration only**, clear the skip file:
+
+```bash
+rm -f data/tmp/full_scan_decided.txt
+```
+
+**Each iteration:**
+
+Run detection, passing the skip file so already-decided pairs are excluded:
+
+```bash
+.venv/bin/python3 scripts/build/find_matches.py --full --skip-file data/tmp/full_scan_decided.txt [--threshold N if specified]
+```
+
+- **Exit code 0**: no pairs remain → skip to Step 3
+- **Exit code 2**: parse the `FILES: N` line. Continue to Step 2 — but regardless of FILES count, always instruct the agent(s) to **skip running apply_duplicates.py** (the caller handles it). After the agent(s) complete, concatenate if N > 1, then:
+
+  ```bash
+  .venv/bin/python3 scripts/build/apply_duplicates.py --record-skips data/tmp/full_scan_decided.txt
+  ```
+
+  Parse `Decisions: X merge(s)` from the apply output.
+
+  - **If `X >= 5`**: the DB still has duplicates at this score level — repeat this iteration (do NOT clear the skip file again)
+  - **If `X < 5`**: the batch was mostly skips, DB is clean — continue to Step 3
 
 ---
 
@@ -67,7 +111,7 @@ Review duplicate candidates and write merge/skip decisions.
 Candidate file: data/tmp/duplicate_candidates_K.txt
 Output file: data/tmp/duplicate_resolved_K.txt
 Skip Step 1 — detection has already been run.
-Skip Step 4 — do NOT run apply_duplicates.py. The caller will handle it.
+Skip Step 5 — do NOT run apply_duplicates.py. The caller will handle it.
 ```
 
 After **all** agents complete:

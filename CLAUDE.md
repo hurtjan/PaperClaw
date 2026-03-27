@@ -2,7 +2,7 @@
 
 ## Project
 
-Literature database system that transforms your paper-library into a cross-referenced, queryable citation graph. All DB writes are tracked via JSON Patch deltas for history and rollback. Agents handle comprehension (ID generation, parsing, matching). Python handles mechanics (scoring, indexing, assembly).
+Literature database system that transforms your paper-library into a cross-referenced, queryable citation graph. JSON files are the canonical store; DuckDB serves as an acceleration layer for heavy operations (candidate generation, reference rewriting, bidirectional repair). All DB writes are tracked via gzipped JSON Patch deltas and a DuckDB WAL table for history and rollback. Agents handle comprehension (ID generation, parsing, matching). Python handles mechanics (scoring, indexing, assembly).
 
 ## Conventions
 
@@ -26,18 +26,41 @@ Always show full paper title at least once. Use (Author, Year) for short mention
 
 ### Python environment
 
-Always use `.venv/bin/python3` for scripts. Install with `.venv/bin/pip install <pkg>` and add to `requirements.txt`.
+Always use `.venv/bin/python3` for scripts. Install with `.venv/bin/pip install <pkg>` and add to `requirements.txt`. Core libraries: `scripts/lib/litdb.py` (shared utilities, JSON I/O, normalization) and `scripts/lib/db.py` (DuckDB acceleration layer).
+
+### JSON serialization
+
+All scripts use `fast_loads()`/`fast_dumps()` from `litdb.py` (backed by `orjson` for 5-10x faster serialization, with stdlib `json` fallback). Never use `json.loads()`/`json.dump()` directly in scripts that import from litdb.
 
 ### Change tracking
 
-All writes to `papers.json`, `authors.json`, and `contexts.json` are automatically tracked as JSON Patch deltas.
+All writes to `papers.json`, `authors.json`, and `contexts.json` are tracked via two systems:
 
-- Patches stored in `data/db_history/patches/`, manifest in `data/db_history/manifest.jsonl`
-- Rollback via `scripts/build/rollback.py`:
-  - `rollback.py` — view history
-  - `rollback.py --dry-run --last 1` — preview undo
-  - `rollback.py --last 1` — undo last change
-  - `rollback.py prune --keep 50` — trim old patches
+1. **JSON Patch deltas** (gzipped, forward-only — reverse patches recomputed on demand):
+   - Patches stored in `data/db_history/patches/*.json.gz`, manifest in `data/db_history/manifest.jsonl`
+   - Rollback via `scripts/build/rollback.py`:
+     - `rollback.py` — view history
+     - `rollback.py --dry-run --last 1` — preview undo
+     - `rollback.py --last 1` — undo last change
+     - `rollback.py prune --keep 50` — trim old patches
+   - Full rebuilds (`build_authors.py`, `build_index.py`) skip patch tracking (too expensive, not useful)
+
+2. **DuckDB WAL** (`_changes` table in `data/db/lit.duckdb`):
+   - Lightweight change log written on every tracked `export_json()` call
+   - Queryable via `scripts/lib/db.py`: `get_change_history()`, `prune_change_history()`
+
+### Incremental builds
+
+`build_index.py` and `build_authors.py` support incremental mode (default). They track which files/papers were processed and skip unchanged data on subsequent runs. Use `--force` for a full rebuild.
+
+### DuckDB acceleration layer
+
+`scripts/lib/db.py` provides SQL-backed helpers for operations that are O(n²) in Python:
+- `find_candidate_pairs_sql()` — bucketed candidate generation with size caps
+- `batch_rewrite_references_sql()` — alias→canonical reference rewriting
+- `repair_bidi_sql()` — bidirectional edge repair with set-based lookups
+
+These are used automatically by `find_matches.py`, `merge_duplicates.py`, and `merge_db.py` when DuckDB is available.
 
 ## Skills
 
@@ -47,6 +70,7 @@ All writes to `papers.json`, `authors.json`, and `contexts.json` are automatical
 | `/query` | Query the literature database for research | User asks questions about the literature, wants to search/explore |
 | `/ingest` | Full pipeline: PDF intake → extraction → linking → DB rebuild | User drops new PDFs or says "ingest/add this paper" |
 | `/merge` | Import an external PaperClaw DB into the local DB | User wants to merge/import papers from another corpus |
+| `/export` | Bundle the local DB into a shareable .paperclaw file | User wants to share their database or create a portable backup |
 | `/pull-citing` | Fetch papers that cite your owned papers from Semantic Scholar | User wants to discover citing papers or enrich metadata |
 | `/fetch-preprints` | Download PDFs from preprint servers (arXiv, bioRxiv, medRxiv, SSRN) | User wants to download papers from preprint servers or populate pdf-staging/ |
 | `/test` | End-to-end pipeline test using fixture PDFs | Verify pipeline works after changes, or first-time validation |

@@ -6,7 +6,6 @@ Usage:
   .venv/bin/python3 scripts/build/apply_duplicates.py [--dry-run]
 
 Reads:  data/tmp/duplicate_resolved.txt
-        data/tmp/duplicate_candidates.json
 Writes: data/tmp/duplicate_merge_plan.json
 Runs:   scripts/build/merge_duplicates.py [--dry-run]
         scripts/query/duckdb_query.py rebuild
@@ -14,7 +13,6 @@ Runs:   scripts/build/merge_duplicates.py [--dry-run]
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -22,34 +20,33 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+from litdb import export_json, fast_loads
+
+PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 RESOLVED_FILE = ROOT / "data" / "tmp" / "duplicate_resolved.txt"
-CANDIDATES_FILE = ROOT / "data" / "tmp" / "duplicate_candidates.json"
 MERGE_PLAN_FILE = ROOT / "data" / "tmp" / "duplicate_merge_plan.json"
 
 
-def parse_resolved(path: Path) -> dict:
+def parse_resolved(path: Path) -> list[tuple]:
     """
     Parse duplicate_resolved.txt.
-    Returns {group_id: ("merge", canonical_id) | ("skip",)}
+    Returns list of (action, canonical_id, alias_ids).
+    Format: merge canonical alias1 [alias2 ...]  OR  skip canonical alias1 [alias2 ...]
     """
-    decisions = {}
+    decisions = []
     for line in path.read_text().splitlines():
         line = line.split("#")[0].strip()
         if not line:
             continue
-        m = re.match(r"GROUP\s+(\d+):\s+(merge|skip)\s*(\S+)?", line, re.IGNORECASE)
-        if m:
-            group_id = int(m.group(1))
-            action = m.group(2).lower()
-            canonical = m.group(3) if m.group(3) else None
-            if action == "merge":
-                if not canonical:
-                    print(f"ERROR: GROUP {group_id} has merge but no canonical_id",
-                          file=sys.stderr)
-                    sys.exit(1)
-                decisions[group_id] = ("merge", canonical)
-            else:
-                decisions[group_id] = ("skip",)
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        action = parts[0].lower()
+        if action not in ("merge", "skip"):
+            continue
+        canonical = parts[1]
+        aliases = parts[2:]
+        decisions.append((action, canonical, aliases))
     return decisions
 
 
@@ -57,51 +54,44 @@ def main():
     parser = argparse.ArgumentParser(description="Apply duplicate resolution decisions")
     parser.add_argument("--dry-run", action="store_true",
                         help="Preview changes without writing")
+    parser.add_argument("--record-skips", metavar="FILE",
+                        help="Append skipped group pairs to this file (for iterative --full scanning)")
     args = parser.parse_args()
 
     if not RESOLVED_FILE.exists():
         print(f"ERROR: {RESOLVED_FILE} not found.", file=sys.stderr)
         sys.exit(1)
-    if not CANDIDATES_FILE.exists():
-        print(f"ERROR: {CANDIDATES_FILE} not found.", file=sys.stderr)
-        sys.exit(1)
 
     decisions = parse_resolved(RESOLVED_FILE)
-    candidates = json.loads(CANDIDATES_FILE.read_text())
-
-    # Build group_id -> paper_ids mapping
-    group_paper_ids: dict = {}
-    for group in candidates.get("groups", []):
-        gid = group["group_id"]
-        group_paper_ids[gid] = [p["id"] for p in group["papers"]]
 
     merges = []
     skipped = 0
+    all_decision_ids: set[str] = set()
 
-    for group_id, decision in sorted(decisions.items()):
-        if decision[0] == "skip":
+    for action, canonical_id, alias_ids in decisions:
+        all_decision_ids.add(canonical_id)
+        all_decision_ids.update(alias_ids)
+        if action == "skip":
             skipped += 1
             continue
-
-        _, canonical_id = decision
-        paper_ids = group_paper_ids.get(group_id)
-        if not paper_ids:
-            print(f"WARN: GROUP {group_id} not found in candidates, skipping",
-                  file=sys.stderr)
-            continue
-
-        if canonical_id not in paper_ids:
-            print(
-                f"ERROR: canonical {canonical_id} not in GROUP {group_id} "
-                f"paper IDs: {paper_ids}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        alias_ids = [pid for pid in paper_ids if pid != canonical_id]
         merges.append({"canonical_id": canonical_id, "alias_ids": alias_ids})
 
     print(f"Decisions: {len(merges)} merge(s), {skipped} skip(s)")
+
+    # Record skipped group pairs to skip file for iterative --full scanning
+    if args.record_skips and not args.dry_run:
+        skip_lines = []
+        for action, canonical_id, alias_ids in decisions:
+            if action == "skip":
+                pids = [canonical_id] + alias_ids
+                for i in range(len(pids)):
+                    for j in range(i + 1, len(pids)):
+                        a, b = sorted([pids[i], pids[j]])
+                        skip_lines.append(f"{a}|||{b}")
+        if skip_lines:
+            with open(args.record_skips, "a") as f:
+                f.write("\n".join(skip_lines) + "\n")
+            print(f"Recorded {len(skip_lines)} skipped pair(s) → {args.record_skips}")
 
     if not merges:
         print("No merges to apply.")
@@ -131,6 +121,21 @@ def main():
     if args.dry_run:
         print("STOP — duplicate resolution complete.")
         sys.exit(0)
+
+    # Clear dedup_pending flags for all processed papers (merged and skipped)
+    all_processed_ids = all_decision_ids
+
+    if all_processed_ids and PAPERS_FILE.exists():
+        db = fast_loads(PAPERS_FILE.read_text())
+        papers_db = db["papers"]
+        cleared = 0
+        for pid in all_processed_ids:
+            if pid in papers_db and papers_db[pid].pop("dedup_pending", None) is not None:
+                cleared += 1
+        if cleared:
+            export_json(db, PAPERS_FILE,
+                        description=f"clear dedup_pending: {cleared} paper(s) processed")
+            print(f"Cleared dedup_pending on {cleared} paper(s)")
 
     # Rebuild DuckDB query index
     rebuild_cmd = [

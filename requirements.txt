@@ -3,3 +3,4 @@ pymupdf
 duckdb
 pyyaml
 jsonpatch
+orjson

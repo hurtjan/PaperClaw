@@ -24,24 +24,29 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from rapidfuzz.fuzz import ratio as rapidfuzz_ratio
+from rapidfuzz.fuzz import ratio as rapidfuzz_ratio, token_sort_ratio as rapidfuzz_token_sort
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from litdb import (
     PaperIndex, normalize_doi, normalize_author_lastname,
-    export_json, is_owned,
+    export_json, is_owned, fast_loads,
     _get_first_lastname, _get_title_text, _title_prefix_fp, _raw_title_prefix,
 )
+try:
+    from db import find_candidate_pairs_sql
+    _HAS_DUCKDB_ACCEL = True
+except ImportError:
+    _HAS_DUCKDB_ACCEL = False
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 OUTPUT_FILE = ROOT / "data" / "tmp" / "duplicate_candidates.json"
 TXT_OUTPUT_FILE = ROOT / "data" / "tmp" / "duplicate_candidates.txt"
 AUTO_MERGE_PLAN_FILE = ROOT / "data" / "tmp" / "auto_merge_plan.json"
 
-MAX_TXT_SIZE = 60 * 1024  # 60KB per TXT file
-MAX_PAIRWISE_TXT = 20  # max pairwise entries per group in TXT output
+MAX_TXT_SIZE = 30 * 1024  # 30KB per TXT file (must stay under Read tool's 10K token limit)
+MAX_BUCKET_SIZE = 200  # skip author-lastname buckets larger than this (O(n²) prevention)
 
 # Type priority for canonical selection: higher = preferred
 TYPE_PRIORITY = {"owned": 3, "external_owned": 2, "stub": 1}
@@ -99,26 +104,35 @@ def score_paper_pair(a: dict, b: dict) -> tuple[float, list[str], dict]:
         score += 4.0
         signals.append("doi_match")
 
-    # Title similarity
+    # Title similarity — dominant signal; academic titles are long and specific
     a_title = _get_title_text(a)
     b_title = _get_title_text(b)
     title_sim = 0.0
+    title_token_sort = 0.0
     if a_title and b_title:
-        ratio = rapidfuzz_ratio(a_title, b_title) / 100.0
-        title_sim = ratio
-        if ratio >= 0.90:
-            score += 2.0
+        raw_ratio = rapidfuzz_ratio(a_title, b_title) / 100.0
+        token_sort = rapidfuzz_token_sort(a_title, b_title) / 100.0
+        title_sim = max(raw_ratio, token_sort)
+        title_token_sort = token_sort
+        if title_sim >= 0.97:
+            score += 5.0
+            signals.append("title_exact")
+        elif title_sim >= 0.90:
+            score += 3.5
             signals.append("title_high")
-        elif ratio >= 0.70:
+        elif title_sim >= 0.80:
+            score += 2.0
+            signals.append("title_mid_high")
+        elif title_sim >= 0.70:
             score += 1.0
             signals.append("title_mid")
 
-        # Title prefix (+0.5, only if not title_high)
-        if "title_high" not in signals:
+        # Title prefix (+0.75, only if below title_mid_high)
+        if "title_exact" not in signals and "title_high" not in signals and "title_mid_high" not in signals:
             a_fp = _title_prefix_fp(a_title)
             b_fp = _title_prefix_fp(b_title)
             if len(a_fp) > 8 and a_fp == b_fp:
-                score += 0.5
+                score += 0.75
                 signals.append("title_prefix")
 
     # First author match (+1.0)
@@ -128,24 +142,54 @@ def score_paper_pair(a: dict, b: dict) -> tuple[float, list[str], dict]:
         score += 1.0
         signals.append("first_author")
 
-    # Author overlap Jaccard (+1.5)
+    # Author overlap — tiered by Jaccard + containment for partial lists
     a_authors = get_author_lastname_set(a)
     b_authors = get_author_lastname_set(b)
     shared_authors = set()
     author_jaccard = 0.0
+    author_containment = 0.0
+    author_pts = 0.0
     if a_authors and b_authors:
         shared_authors = a_authors & b_authors
-        author_jaccard = len(shared_authors) / len(a_authors | b_authors)
-        if author_jaccard >= 0.5:
-            score += 1.5
+        union_size = len(a_authors | b_authors)
+        author_jaccard = len(shared_authors) / union_size if union_size else 0.0
+        min_size = min(len(a_authors), len(b_authors))
+        author_containment = len(shared_authors) / min_size if min_size else 0.0
+        if author_jaccard >= 0.80:
+            author_pts = 2.0
+            signals.append("author_overlap_high")
+        elif author_jaccard >= 0.50:
+            author_pts = 1.5
             signals.append("author_overlap")
+        elif author_jaccard >= 0.30:
+            author_pts = 0.5
+            signals.append("author_overlap_low")
+        # Containment: stub has 1-2 authors fully contained in larger list
+        if author_pts < 1.0 and min_size <= 2 and max(len(a_authors), len(b_authors)) >= 3 and author_containment >= 1.0:
+            author_pts = 1.0
+            signals.append("author_contained")
+        score += author_pts
 
-    # Year match (+0.5)
+    # Cap total author signals at +3.5
+    author_total = author_pts + (1.0 if "first_author" in signals else 0.0)
+    if author_total > 3.5:
+        score -= (author_total - 3.5)
+
+    # Year proximity
     a_yr = str(a.get("year", "")).strip()
     b_yr = str(b.get("year", "")).strip()
-    if a_yr and b_yr and a_yr == b_yr:
-        score += 0.5
-        signals.append("year_match")
+    year_diff = None
+    if a_yr and b_yr and a_yr.isdigit() and b_yr.isdigit():
+        year_diff = abs(int(a_yr) - int(b_yr))
+        if year_diff == 0:
+            score += 0.5
+            signals.append("year_match")
+        elif year_diff == 1:
+            score += 0.3
+            signals.append("year_close")
+        elif year_diff == 2:
+            score += 0.1
+            signals.append("year_near")
 
     # Cited_by overlap (+1.5)
     cited_by_a = set(a.get("cited_by", []))
@@ -158,36 +202,59 @@ def score_paper_pair(a: dict, b: dict) -> tuple[float, list[str], dict]:
             score += 1.5
             signals.append("cited_by_overlap")
 
-    # Cites overlap (+1.0)
+    # Cites overlap (up to +6.0 at >= 80% Jaccard)
     cites_a = set(a.get("cites", []))
     cites_b = set(b.get("cites", []))
     shared_cites = cites_a & cites_b
     cites_jaccard = 0.0
     if cites_a and cites_b:
         cites_jaccard = len(shared_cites) / len(cites_a | cites_b)
-        if cites_jaccard >= 0.25:
-            score += 1.0
+        if cites_jaccard >= 0.80:
+            score += 6.0
+            signals.append("cites_overlap_high")
+        elif cites_jaccard >= 0.50:
+            score += 4.0
+            signals.append("cites_overlap_mid")
+        elif cites_jaccard >= 0.25:
+            score += 2.0
             signals.append("cites_overlap")
 
     details = {
         "title_similarity": round(title_sim, 3),
+        "title_token_sort": round(title_token_sort, 3),
         "author_jaccard": round(author_jaccard, 3),
+        "author_containment": round(author_containment, 3),
+        "year_diff": year_diff,
         "cited_by_jaccard": round(cited_by_jaccard, 3),
         "cites_jaccard": round(cites_jaccard, 3),
         "shared_citers": sorted(shared_citers),
         "shared_cites": sorted(shared_cites),
         "shared_authors": sorted(shared_authors),
+        "_title_len": max(len(a_title), len(b_title)) if a_title and b_title else 0,
     }
 
     return round(score, 1), signals, details
 
 
-def is_auto_match(signals: list[str], title_similarity: float) -> bool:
-    """Check if a pair qualifies for auto-merge."""
-    return (
-        ("s2_id_match" in signals or "doi_match" in signals)
-        and title_similarity > 0.90
-    )
+def is_auto_match(signals: list[str], details: dict) -> bool:
+    """Check if a pair qualifies for auto-merge (skips agent review).
+
+    Path 1: S2 ID or DOI match + title > 0.90
+    Path 2: Near-exact long title + first author + author overlap
+    """
+    title_sim = details.get("title_similarity", 0.0)
+    # Path 1: identifier match + title confirmation
+    if ("s2_id_match" in signals or "doi_match" in signals) and title_sim > 0.90:
+        return True
+    # Path 2: near-exact title (long enough) + author evidence
+    title_len = details.get("_title_len", 0)
+    has_author_overlap = any(s.startswith("author_overlap") or s == "author_contained" for s in signals)
+    if (title_sim >= 0.97
+            and title_len >= 30
+            and "first_author" in signals
+            and has_author_overlap):
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -384,112 +451,30 @@ def build_paper_summary(paper: dict) -> dict:
     }
 
 
+def _short_authors(authors: list) -> str:
+    """First author et al., or (unknown)."""
+    if not authors:
+        return "(unknown)"
+    first = str(authors[0]).split(",")[0].strip()
+    if len(authors) > 1:
+        return f"{first} et al."
+    return first
+
+
 def format_group_txt(group: dict) -> str:
-    """Render a single duplicate group as human-readable text."""
-    lines = []
-    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-    group_id = group["group_id"]
-    confidence = group["confidence"].upper()
-    papers_in_group = group["papers"]
-    pairwise = group["pairwise_scores"]
+    """Render a single duplicate candidate set as a one-line entry."""
     canonical_id = group["recommended_canonical"]
-    max_score = max((p["score"] for p in pairwise), default=0.0)
+    papers_in_group = group["papers"]
 
-    lines.append(
-        f"--- GROUP {group_id} ({confidence} confidence, max score: {max_score}) ---"
-    )
-    lines.append(f"Recommended canonical: {canonical_id}")
-    lines.append("")
-
-    paper_info: dict[str, dict] = {}
-    paper_to_letter: dict[str, str] = {}
-    for idx, paper in enumerate(papers_in_group):
-        letter = letters[idx] if idx < len(letters) else str(idx + 1)
-        paper_to_letter[paper["id"]] = letter
-        paper_info[paper["id"]] = paper
-
-        authors_str = (
-            ", ".join(str(a) for a in paper.get("authors", [])) or "(unknown)"
-        )
-        doi_str = paper.get("doi") or "(none)"
-        s2_str = paper.get("s2_paper_id") or "(none)"
-        year_str = str(paper.get("year", "")) if paper.get("year") else "(unknown)"
+    parts = []
+    for paper in papers_in_group:
+        pid = paper["id"]
+        prefix = "*" if pid == canonical_id else ""
         title = paper.get("title") or "(no title)"
+        authors_str = _short_authors(paper.get("authors", []))
+        parts.append(f"{prefix}{pid} | {title} | {authors_str}")
 
-        lines.append(f"  Paper {letter}: {paper['id']}")
-        lines.append(f'    Title: "{title}"')
-        lines.append(f"    Authors: {authors_str}")
-        lines.append(
-            f"    Year: {year_str} | Type: {paper.get('type', 'unknown')} "
-            f"| DOI: {doi_str}"
-        )
-        lines.append(
-            f"    Cites: {paper.get('cites_count', 0)} "
-            f"| Cited by: {paper.get('cited_by_count', 0)}"
-        )
-        if s2_str != "(none)":
-            lines.append(f"    S2 ID: {s2_str}")
-        lines.append("")
-
-    sorted_pairwise = sorted(pairwise, key=lambda p: -p["score"])
-    shown = sorted_pairwise[:MAX_PAIRWISE_TXT]
-    truncated = len(sorted_pairwise) - len(shown)
-
-    for pw in shown:
-        a_letter = paper_to_letter.get(pw["a"], pw["a"])
-        b_letter = paper_to_letter.get(pw["b"], pw["b"])
-        signals = ", ".join(pw["signals"]) if pw["signals"] else "(none)"
-        lines.append(
-            f"  Pairwise: {a_letter}-{b_letter} score={pw['score']} "
-            f"signals=[{signals}]"
-        )
-
-        authors_part = (
-            ", ".join(pw["shared_authors"]) if pw["shared_authors"] else "(none)"
-        )
-
-        a_info = paper_info.get(pw["a"], {})
-        b_info = paper_info.get(pw["b"], {})
-        a_cited_by = a_info.get("cited_by_count", 0)
-        b_cited_by = b_info.get("cited_by_count", 0)
-
-        if a_cited_by == 0:
-            citers_part = f"n/a ({a_letter} has no cited_by)"
-        elif b_cited_by == 0:
-            citers_part = f"n/a ({b_letter} has no cited_by)"
-        else:
-            citers_part = str(len(pw["shared_citers"]))
-
-        a_cites = a_info.get("cites_count", 0)
-        b_cites = b_info.get("cites_count", 0)
-
-        if a_cites == 0:
-            cites_part = f"n/a ({a_letter} has no cites)"
-        elif b_cites == 0:
-            cites_part = f"n/a ({b_letter} has no cites)"
-        else:
-            cites_part = str(len(pw["shared_cites"]))
-
-        lines.append(
-            f"    Title sim: {pw.get('title_similarity', 0):.3f} "
-            f"| Shared authors: {authors_part}"
-        )
-        lines.append(
-            f"    Shared citers: {citers_part} "
-            f"| Shared cites: {cites_part}"
-        )
-        lines.append(
-            f"    Author Jaccard: {pw['author_jaccard']:.3f} "
-            f"| Cited-by Jaccard: {pw['cited_by_jaccard']:.3f}"
-        )
-        lines.append("")
-
-    if truncated > 0:
-        lines.append(f"  ... and {truncated} more pairs (see JSON for full list)")
-        lines.append("")
-
-    return "\n".join(lines)
+    return "  <?>  ".join(parts)
 
 
 def write_txt_output(result: dict) -> list[Path]:
@@ -507,21 +492,14 @@ def write_txt_output(result: dict) -> list[Path]:
     txt_dir.mkdir(parents=True, exist_ok=True)
 
     if not groups:
-        content = (
-            f"=== DUPLICATE GROUPS ===\n"
-            f"# Generated: {generated} | Threshold: {threshold} | Groups: 0\n\n"
-            f"No duplicate groups found.\n"
-        )
+        content = f"# Duplicate candidates | {generated}\n# No candidates found.\n"
         TXT_OUTPUT_FILE.write_text(content)
         return [TXT_OUTPUT_FILE]
 
     group_texts = [format_group_txt(g) for g in groups]
 
-    header = (
-        f"=== DUPLICATE GROUPS ===\n"
-        f"# Generated: {generated} | Threshold: {threshold} | Groups: {total_groups}"
-    )
-    full_content = header + "\n\n" + "\n".join(group_texts)
+    header = f"# Duplicate candidates | {generated}"
+    full_content = header + "\n" + "\n".join(group_texts)
 
     if len(full_content.encode("utf-8")) <= MAX_TXT_SIZE:
         TXT_OUTPUT_FILE.write_text(full_content)
@@ -552,12 +530,8 @@ def write_txt_output(result: dict) -> list[Path]:
     total_parts = len(bins)
     for part_num, part_texts in enumerate(bins, 1):
         n_in_part = len(part_texts)
-        file_header = (
-            f"=== DUPLICATE GROUPS (Part {part_num} of {total_parts}) ===\n"
-            f"# Generated: {generated} | Threshold: {threshold} "
-            f"| Groups in this file: {n_in_part} (of {total_groups} total)"
-        )
-        content = file_header + "\n\n" + "\n".join(part_texts)
+        file_header = f"# Duplicate candidates | {generated}"
+        content = file_header + "\n" + "\n".join(part_texts)
         path = txt_dir / f"duplicate_candidates_{part_num}.txt"
         path.write_text(content)
         written.append(path)
@@ -569,8 +543,11 @@ def write_txt_output(result: dict) -> list[Path]:
 # Candidate pair generation
 # ---------------------------------------------------------------------------
 
-def generate_candidate_pairs(papers: dict, index: PaperIndex) -> set[frozenset]:
+def generate_candidate_pairs(papers: dict, index: PaperIndex,
+                             full: bool = False,
+                             skip_pairs: set | None = None) -> set[frozenset]:
     """Generate candidate pairs from multiple buckets (union of all)."""
+    _skip = skip_pairs or set()
     candidate_pairs: set[frozenset] = set()
 
     def _add_pair(a_id: str, b_id: str):
@@ -583,9 +560,14 @@ def generate_candidate_pairs(papers: dict, index: PaperIndex) -> set[frozenset]:
             return
         if a_id in b.get("aliases", []) or b_id in a.get("aliases", []):
             return
-        candidate_pairs.add(frozenset([a_id, b_id]))
+        if not full and not (a.get("dedup_pending") or b.get("dedup_pending")):
+            return
+        pair = frozenset([a_id, b_id])
+        if pair in _skip:
+            return
+        candidate_pairs.add(pair)
 
-    # First-author lastname buckets
+    # First-author lastname buckets (capped to avoid O(n²) on common names)
     author_index: dict[str, list[str]] = {}
     for pid, paper in papers.items():
         if paper.get("superseded_by"):
@@ -595,7 +577,7 @@ def generate_candidate_pairs(papers: dict, index: PaperIndex) -> set[frozenset]:
             author_index.setdefault(first_key, []).append(pid)
 
     for pids in author_index.values():
-        if len(pids) < 2:
+        if len(pids) < 2 or len(pids) > MAX_BUCKET_SIZE:
             continue
         for i in range(len(pids)):
             for j in range(i + 1, len(pids)):
@@ -676,13 +658,17 @@ def main():
                         help="Max papers per group (default: 10)")
     parser.add_argument("--json", action="store_true",
                         help="JSON-only output (no human-readable summary)")
+    parser.add_argument("--full", action="store_true",
+                        help="Scan all pairs, ignoring dedup_pending flag")
+    parser.add_argument("--skip-file", metavar="FILE",
+                        help="File of already-decided pairs to exclude (one 'id1|||id2' per line)")
     args = parser.parse_args()
 
     if not PAPERS_FILE.exists():
         print("ERROR: data/db/papers.json not found.", file=sys.stderr)
         sys.exit(1)
 
-    db = json.loads(PAPERS_FILE.read_text())
+    db = fast_loads(PAPERS_FILE.read_text())
     papers = db["papers"]
     if not args.json:
         print(f"Loaded {len(papers)} papers")
@@ -691,8 +677,29 @@ def main():
     active_papers = [p for p in papers.values() if not p.get("superseded_by")]
     index = PaperIndex(active_papers)
 
+    # Load already-decided pairs to skip (for iterative --full scanning)
+    skip_pairs: set = set()
+    if args.skip_file:
+        skip_path = Path(args.skip_file)
+        if skip_path.exists():
+            for line in skip_path.read_text().splitlines():
+                line = line.strip()
+                if "|||" in line:
+                    a, b = line.split("|||", 1)
+                    skip_pairs.add(frozenset([a.strip(), b.strip()]))
+        if not args.json and skip_pairs:
+            print(f"Skipping {len(skip_pairs)} already-decided pair(s)")
+
     # Generate candidate pairs from all buckets
-    candidate_pairs = generate_candidate_pairs(papers, index)
+    # Use DuckDB acceleration when available (SQL bucketing with size caps)
+    if _HAS_DUCKDB_ACCEL:
+        if not args.json:
+            print("Using DuckDB-accelerated candidate generation")
+        candidate_pairs = find_candidate_pairs_sql(papers, full=args.full,
+                                                   skip_pairs=skip_pairs)
+    else:
+        candidate_pairs = generate_candidate_pairs(papers, index, full=args.full,
+                                                   skip_pairs=skip_pairs)
     if not args.json:
         print(f"Candidate pairs: {len(candidate_pairs)}")
 
@@ -707,7 +714,7 @@ def main():
 
         score, signals, details = score_paper_pair(a, b)
 
-        if score < args.threshold and not is_auto_match(signals, details["title_similarity"]):
+        if score < args.threshold and not is_auto_match(signals, details):
             continue
 
         pair_data = {
@@ -718,7 +725,7 @@ def main():
         }
         pair_score_map[pair] = pair_data
 
-        if is_auto_match(signals, details["title_similarity"]):
+        if is_auto_match(signals, details):
             auto_match_pairs.append(pair_data)
         elif score >= args.threshold:
             judgment_pairs.append(pair_data)
@@ -842,10 +849,10 @@ def main():
     # Sort: high confidence first, then by max_score descending
     output_groups.sort(key=lambda g: (g["confidence"] != "high", -g["_max_score"]))
 
-    # Limit and renumber
+    # Limit and set group_id to canonical paper ID
     output_groups = output_groups[:args.limit]
-    for i, g in enumerate(output_groups, 1):
-        g["group_id"] = i
+    for g in output_groups:
+        g["group_id"] = g["recommended_canonical"]
         del g["_max_score"]
 
     result = {

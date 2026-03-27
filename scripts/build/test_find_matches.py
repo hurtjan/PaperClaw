@@ -47,7 +47,7 @@ paper_b = {"title": "Climate Change Effects", "doi": "10.1234/abc", "authors": [
 score, signals, details = score_paper_pair(paper_a, paper_b)
 ok("DOI match → doi_match signal", "doi_match" in signals)
 ok("DOI match → +4.0", score >= 4.0)
-ok("title_high signal present", "title_high" in signals)
+ok("title_exact signal present", "title_exact" in signals)
 ok("title_similarity near 1.0", details["title_similarity"] > 0.95)
 
 paper_c = {"title": "Climate Change Effects", "s2_paper_id": "abc123",
@@ -66,12 +66,14 @@ print("\nTest 2: score_paper_pair — title signals")
 paper_e = {"title": "Monetary Policy and Financial Stability", "authors": [], "cites": [], "cited_by": []}
 paper_f = {"title": "Monetary Policy and Financial Stability: A Review", "authors": [], "cites": [], "cited_by": []}
 score3, signals3, details3 = score_paper_pair(paper_e, paper_f)
-ok("similar titles → title_high or title_mid", "title_high" in signals3 or "title_mid" in signals3)
+ok("similar titles → title signal", "title_high" in signals3 or "title_mid_high" in signals3 or "title_mid" in signals3)
 ok("title_similarity > 0.7", details3["title_similarity"] > 0.7)
 
 paper_g = {"title": "Completely Different Paper About Cats", "authors": [], "cites": [], "cited_by": []}
 score4, signals4, details4 = score_paper_pair(paper_e, paper_g)
-ok("different titles → no title signal", "title_high" not in signals4 and "title_mid" not in signals4)
+ok("different titles → no title signal",
+   "title_exact" not in signals4 and "title_high" not in signals4
+   and "title_mid_high" not in signals4 and "title_mid" not in signals4)
 ok("low title_similarity", details4["title_similarity"] < 0.5)
 
 # ---------------------------------------------------------------------------
@@ -105,7 +107,7 @@ paper_m = {"title": "Paper M", "authors": ["Smith, John"],
             "cited_by": ["x", "y", "w"], "cites": ["p", "q", "s"]}
 score7, signals7, details7 = score_paper_pair(paper_l, paper_m)
 ok("cited_by_overlap signal present", "cited_by_overlap" in signals7)
-ok("cites_overlap signal present", "cites_overlap" in signals7)
+ok("cites_overlap_mid signal present", "cites_overlap_mid" in signals7)
 ok("shared_citers has 2 entries", len(details7["shared_citers"]) == 2)
 ok("shared_cites has 2 entries", len(details7["shared_cites"]) == 2)
 
@@ -121,14 +123,18 @@ ok("no citation signals when both empty",
 # ---------------------------------------------------------------------------
 print("\nTest 5: is_auto_match")
 
-ok("DOI + title > 0.90 → auto",
-   is_auto_match(["doi_match", "title_high"], 0.95))
-ok("S2 + title > 0.90 → auto",
-   is_auto_match(["s2_id_match", "title_high"], 0.92))
+ok("DOI + title > 0.90 → auto (path 1)",
+   is_auto_match(["doi_match", "title_high"], {"title_similarity": 0.95, "_title_len": 40}))
+ok("S2 + title > 0.90 → auto (path 1)",
+   is_auto_match(["s2_id_match", "title_high"], {"title_similarity": 0.92, "_title_len": 40}))
 ok("DOI but title < 0.90 → not auto",
-   not is_auto_match(["doi_match", "title_mid"], 0.85))
-ok("no ID match → not auto",
-   not is_auto_match(["title_high", "first_author"], 0.95))
+   not is_auto_match(["doi_match", "title_mid"], {"title_similarity": 0.85, "_title_len": 40}))
+ok("no ID match, no overlap → not auto",
+   not is_auto_match(["title_exact", "first_author"], {"title_similarity": 0.98, "_title_len": 40}))
+ok("near-exact title + first_author + author_overlap → auto (path 2)",
+   is_auto_match(["title_exact", "first_author", "author_overlap"], {"title_similarity": 0.98, "_title_len": 40}))
+ok("near-exact but short title → not auto (path 2 length guard)",
+   not is_auto_match(["title_exact", "first_author", "author_overlap"], {"title_similarity": 0.98, "_title_len": 20}))
 
 # ---------------------------------------------------------------------------
 # Test 6: select_canonical

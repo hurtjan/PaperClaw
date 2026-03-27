@@ -118,6 +118,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -129,6 +130,12 @@ except ImportError:
     sys.exit(1)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+try:
+    from litdb import fast_loads as _fast_loads
+except ImportError:
+    _fast_loads = json.loads
+
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 INDEX_FILE = ROOT / "data" / "db" / "contexts.json"
 AUTHORS_FILE = ROOT / "data" / "db" / "authors.json"
@@ -195,6 +202,31 @@ def _upsert_build_meta(con, source, mtime_ns, size):
     )
 
 
+_TMP_DIR = ROOT / "data" / "tmp"
+
+
+def _bulk_load(con, table_name, rows, empty_schema=None):
+    """Write rows as JSONL, bulk-load via read_json_auto, clean up temp file."""
+    con.execute(f"DROP TABLE IF EXISTS {table_name}")
+    if not rows:
+        if empty_schema:
+            con.execute(f"CREATE TABLE {table_name} ({empty_schema})")
+        return
+    _TMP_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode='w', suffix='.jsonl', delete=False, dir=str(_TMP_DIR)
+    ) as f:
+        tmp = Path(f.name)
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + '\n')
+    try:
+        con.execute(
+            f"CREATE TABLE {table_name} AS SELECT * FROM read_json_auto('{tmp}')"
+        )
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def build_db(con, force=False, fts=False):
     """Load all JSON data into DuckDB tables, skipping groups whose source hasn't changed."""
     t0 = time.time()
@@ -231,7 +263,7 @@ def build_db(con, force=False, fts=False):
         ).fetchone()[0]
     else:
         rebuilt["papers"] = True
-        papers_data = json.loads(PAPERS_FILE.read_text())["papers"]
+        papers_data = _fast_loads(PAPERS_FILE.read_text())["papers"]
         paper_rows = []
         for pid, p in papers_data.items():
             raw_year = p.get("year")
@@ -260,36 +292,18 @@ def build_db(con, force=False, fts=False):
                 "text_file": p.get("text_file", ""),
             })
 
-        con.execute("DROP TABLE IF EXISTS papers")
-        con.execute("""
-            CREATE TABLE papers (
-                paper_id VARCHAR PRIMARY KEY,
-                type VARCHAR,
-                title VARCHAR,
-                authors VARCHAR,
-                year INTEGER,
-                journal VARCHAR,
-                doi VARCHAR,
-                abstract VARCHAR,
-                pdf_file VARCHAR,
-                text_file VARCHAR
-            )
-        """)
-        con.executemany(
-            "INSERT INTO papers VALUES (?,?,?,?,?,?,?,?,?,?)",
-            [(r["paper_id"], r["type"], r["title"], r["authors"], r["year"],
-              r["journal"], r["doi"], r["abstract"], r["pdf_file"], r["text_file"])
-             for r in paper_rows]
-        )
+        _bulk_load(con, "papers", paper_rows,
+            "paper_id VARCHAR, type VARCHAR, title VARCHAR, authors VARCHAR, "
+            "year INTEGER, journal VARCHAR, doi VARCHAR, abstract VARCHAR, "
+            "pdf_file VARCHAR, text_file VARCHAR")
 
-        con.execute("DROP TABLE IF EXISTS citation_edges")
-        con.execute("CREATE TABLE citation_edges (citing_id VARCHAR, cited_id VARCHAR, cited_title VARCHAR)")
-        cites_data = [(pid, p.get("cites", [])) for pid, p in papers_data.items() if p.get("cites")]
-        if cites_data:
-            con.execute("CREATE TEMP TABLE _cites_tmp (citing_id VARCHAR, cited_ids VARCHAR[])")
-            con.executemany("INSERT INTO _cites_tmp VALUES (?,?)", cites_data)
-            con.execute("INSERT INTO citation_edges (citing_id, cited_id) SELECT citing_id, UNNEST(cited_ids) FROM _cites_tmp")
-            con.execute("DROP TABLE _cites_tmp")
+        edge_rows = []
+        for pid, p in papers_data.items():
+            for cited_id in p.get("cites", []):
+                edge_rows.append({"citing_id": pid, "cited_id": cited_id, "cited_title": ""})
+        _bulk_load(con, "citation_edges", edge_rows,
+            "citing_id VARCHAR, cited_id VARCHAR, cited_title VARCHAR")
+        if edge_rows:
             con.execute("UPDATE citation_edges SET cited_title = p.title FROM papers p WHERE citation_edges.cited_id = p.paper_id")
         con.execute("CREATE INDEX idx_ce_citing ON citation_edges(citing_id)")
         con.execute("CREATE INDEX idx_ce_cited ON citation_edges(cited_id)")
@@ -305,40 +319,27 @@ def build_db(con, force=False, fts=False):
         context_count = con.execute("SELECT COUNT(*) FROM contexts").fetchone()[0]
     else:
         rebuilt["contexts"] = True
-        index_data = json.loads(INDEX_FILE.read_text())
+        index_data = _fast_loads(INDEX_FILE.read_text())
         context_rows = []
         for cited_id, entries in index_data.get("by_cited", {}).items():
             for e in entries:
-                context_rows.append((
-                    e.get("citing", ""),
-                    e.get("cited", cited_id),
-                    e.get("cited_title", ""),
-                    e.get("purpose", ""),
-                    e.get("section", ""),
-                    e.get("quote", ""),
-                    e.get("explanation", ""),
-                ))
+                context_rows.append({
+                    "citing_id": e.get("citing", ""),
+                    "cited_id": e.get("cited", cited_id),
+                    "cited_title": e.get("cited_title", ""),
+                    "purpose": e.get("purpose", ""),
+                    "section": e.get("section", ""),
+                    "quote": e.get("quote", ""),
+                    "explanation": e.get("explanation", ""),
+                })
+        _bulk_load(con, "contexts", context_rows,
+            "citing_id VARCHAR, cited_id VARCHAR, cited_title VARCHAR, "
+            "purpose VARCHAR, section VARCHAR, quote VARCHAR, explanation VARCHAR")
 
-        con.execute("DROP TABLE IF EXISTS contexts")
-        con.execute("""
-            CREATE TABLE contexts (
-                citing_id VARCHAR,
-                cited_id VARCHAR,
-                cited_title VARCHAR,
-                purpose VARCHAR,
-                section VARCHAR,
-                quote VARCHAR,
-                explanation VARCHAR
-            )
-        """)
-        if context_rows:
-            con.executemany("INSERT INTO contexts VALUES (?,?,?,?,?,?,?)", context_rows)
-
-        con.execute("DROP TABLE IF EXISTS citation_counts")
-        con.execute("CREATE TABLE citation_counts (paper_id VARCHAR PRIMARY KEY, cited_by_count INTEGER)")
         cc = index_data.get("citation_counts", {})
-        if cc:
-            con.executemany("INSERT INTO citation_counts VALUES (?,?)", list(cc.items()))
+        cc_rows = [{"paper_id": k, "cited_by_count": v} for k, v in cc.items()]
+        _bulk_load(con, "citation_counts", cc_rows,
+            "paper_id VARCHAR, cited_by_count INTEGER")
 
         con.execute("CREATE INDEX IF NOT EXISTS idx_contexts_cited ON contexts(cited_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_contexts_citing ON contexts(citing_id)")
@@ -359,97 +360,82 @@ def build_db(con, force=False, fts=False):
         claim_rows, keyword_rows, topic_rows, section_rows = [], [], [], []
         methodology_rows, question_rows, datasource_rows = [], [], []
 
+        # Skip extractions for superseded papers
+        _pdb = _fast_loads(PAPERS_FILE.read_text())["papers"]
+        superseded_ids = {pid for pid, p in _pdb.items() if p.get("superseded_by")}
+        del _pdb
+
         for f in sorted(EXTRACTIONS_DIR.glob("*.json")):
             if any(part in f.stem for part in (".refs", ".contexts", ".sections", ".analysis")):
                 continue
             try:
-                data = json.loads(f.read_text())
+                data = _fast_loads(f.read_text())
                 if not isinstance(data, dict):
                     continue
             except Exception:
                 continue
 
             pid = f.stem
+            if pid in superseded_ids:
+                continue
 
             for c in data.get("claims", []) or []:
-                claim_rows.append((
-                    pid, c.get("claim", ""), c.get("type", ""), c.get("confidence", ""),
-                    c.get("evidence_basis", ""), c.get("quantification", ""),
-                    json.dumps(c.get("supporting_citations", [])),
-                ))
+                claim_rows.append({
+                    "paper_id": pid, "claim": c.get("claim", ""),
+                    "type": c.get("type", ""), "confidence": c.get("confidence", ""),
+                    "evidence_basis": c.get("evidence_basis", ""),
+                    "quantification": c.get("quantification", ""),
+                    "supporting_citations": json.dumps(c.get("supporting_citations", [])),
+                })
             for kw in data.get("keywords", []) or []:
-                keyword_rows.append((pid, str(kw)))
+                keyword_rows.append({"paper_id": pid, "keyword": str(kw)})
             topics = data.get("topics") or {}
             if isinstance(topics, dict):
                 for field in ("themes", "geographic_focus", "sectors", "policy_context"):
                     for val in topics.get(field, []) or []:
-                        topic_rows.append((pid, field, str(val)))
+                        topic_rows.append({"paper_id": pid, "field": field, "value": str(val)})
             for s in data.get("sections", []) or []:
-                section_rows.append((
-                    pid, s.get("heading", ""), s.get("summary", ""), s.get("annotated_text", ""),
-                ))
+                section_rows.append({
+                    "paper_id": pid, "heading": s.get("heading", ""),
+                    "summary": s.get("summary", ""), "annotated_text": s.get("annotated_text", ""),
+                })
             meth = data.get("methodology") or {}
             if isinstance(meth, dict) and meth:
-                methodology_rows.append((
-                    pid, meth.get("type", ""), meth.get("model_name", ""),
-                    meth.get("approach", ""), meth.get("temporal_scope", ""),
-                    json.dumps(meth.get("geographic_scope", "")),
-                    meth.get("unit_of_analysis", ""), json.dumps(meth.get("scenarios", "")),
-                ))
+                methodology_rows.append({
+                    "paper_id": pid, "type": meth.get("type", ""),
+                    "model_name": meth.get("model_name", ""),
+                    "approach": meth.get("approach", ""),
+                    "temporal_scope": meth.get("temporal_scope", ""),
+                    "geographic_scope": json.dumps(meth.get("geographic_scope", "")),
+                    "unit_of_analysis": meth.get("unit_of_analysis", ""),
+                    "scenarios": json.dumps(meth.get("scenarios", "")),
+                })
                 for ds in meth.get("data_sources", []) or []:
                     if isinstance(ds, dict):
-                        datasource_rows.append((pid, ds.get("name", ""), ds.get("type", ""), ds.get("description", "")))
+                        datasource_rows.append({"paper_id": pid, "name": ds.get("name", ""),
+                            "type": ds.get("type", ""), "description": ds.get("description", "")})
                     else:
-                        datasource_rows.append((pid, str(ds), "", ""))
+                        datasource_rows.append({"paper_id": pid, "name": str(ds), "type": "", "description": ""})
             for q in data.get("research_questions", []) or []:
-                question_rows.append((pid, str(q)))
+                question_rows.append({"paper_id": pid, "question": str(q)})
 
-        con.execute("DROP TABLE IF EXISTS claims")
-        con.execute("""
-            CREATE TABLE claims (
-                paper_id VARCHAR, claim VARCHAR, type VARCHAR,
-                confidence VARCHAR, evidence_basis VARCHAR,
-                quantification VARCHAR, supporting_citations VARCHAR
-            )
-        """)
-        if claim_rows:
-            con.executemany("INSERT INTO claims VALUES (?,?,?,?,?,?,?)", claim_rows)
-
-        con.execute("DROP TABLE IF EXISTS keywords")
-        con.execute("CREATE TABLE keywords (paper_id VARCHAR, keyword VARCHAR)")
-        if keyword_rows:
-            con.executemany("INSERT INTO keywords VALUES (?,?)", keyword_rows)
-
-        con.execute("DROP TABLE IF EXISTS topics")
-        con.execute("CREATE TABLE topics (paper_id VARCHAR, field VARCHAR, value VARCHAR)")
-        if topic_rows:
-            con.executemany("INSERT INTO topics VALUES (?,?,?)", topic_rows)
-
-        con.execute("DROP TABLE IF EXISTS sections")
-        con.execute("CREATE TABLE sections (paper_id VARCHAR, heading VARCHAR, summary VARCHAR, annotated_text VARCHAR)")
-        if section_rows:
-            con.executemany("INSERT INTO sections VALUES (?,?,?,?)", section_rows)
-
-        con.execute("DROP TABLE IF EXISTS methodology")
-        con.execute("""
-            CREATE TABLE methodology (
-                paper_id VARCHAR PRIMARY KEY, type VARCHAR, model_name VARCHAR,
-                approach VARCHAR, temporal_scope VARCHAR, geographic_scope VARCHAR,
-                unit_of_analysis VARCHAR, scenarios VARCHAR
-            )
-        """)
-        if methodology_rows:
-            con.executemany("INSERT INTO methodology VALUES (?,?,?,?,?,?,?,?)", methodology_rows)
-
-        con.execute("DROP TABLE IF EXISTS data_sources")
-        con.execute("CREATE TABLE data_sources (paper_id VARCHAR, name VARCHAR, type VARCHAR, description VARCHAR)")
-        if datasource_rows:
-            con.executemany("INSERT INTO data_sources VALUES (?,?,?,?)", datasource_rows)
-
-        con.execute("DROP TABLE IF EXISTS questions")
-        con.execute("CREATE TABLE questions (paper_id VARCHAR, question VARCHAR)")
-        if question_rows:
-            con.executemany("INSERT INTO questions VALUES (?,?)", question_rows)
+        _bulk_load(con, "claims", claim_rows,
+            "paper_id VARCHAR, claim VARCHAR, type VARCHAR, confidence VARCHAR, "
+            "evidence_basis VARCHAR, quantification VARCHAR, supporting_citations VARCHAR")
+        _bulk_load(con, "keywords", keyword_rows,
+            "paper_id VARCHAR, keyword VARCHAR")
+        _bulk_load(con, "topics", topic_rows,
+            "paper_id VARCHAR, field VARCHAR, value VARCHAR")
+        _bulk_load(con, "sections", section_rows,
+            "paper_id VARCHAR, heading VARCHAR, summary VARCHAR, annotated_text VARCHAR")
+        _bulk_load(con, "methodology", methodology_rows,
+            "paper_id VARCHAR, type VARCHAR, model_name VARCHAR, approach VARCHAR, "
+            "temporal_scope VARCHAR, geographic_scope VARCHAR, unit_of_analysis VARCHAR, "
+            "scenarios VARCHAR")
+        _bulk_load(con, "data_sources", datasource_rows,
+            "paper_id VARCHAR, name VARCHAR, type VARCHAR, description VARCHAR")
+        _bulk_load(con, "questions", question_rows,
+            "paper_id VARCHAR, question VARCHAR")
 
         claim_count = len(claim_rows)
         keyword_count = len(keyword_rows)
@@ -468,40 +454,34 @@ def build_db(con, force=False, fts=False):
         author_rows, paper_author_rows = [], []
 
         if AUTHORS_FILE.exists():
-            authors_data = json.loads(AUTHORS_FILE.read_text())
+            authors_data = _fast_loads(AUTHORS_FILE.read_text())
             for aid, a in authors_data.get("persons", {}).items():
                 variants = "|".join(a.get("name_variants", []))
-                author_rows.append((
-                    a.get("id", aid), a.get("canonical_name", ""), "person",
-                    variants, a.get("paper_count", 0), a.get("owned_paper_count", 0),
-                ))
+                author_rows.append({
+                    "author_id": a.get("id", aid),
+                    "canonical_name": a.get("canonical_name", ""),
+                    "type": "person", "name_variants": variants,
+                    "paper_count": a.get("paper_count", 0),
+                    "owned_paper_count": a.get("owned_paper_count", 0),
+                })
                 for pid in a.get("papers", []):
-                    paper_author_rows.append((pid, a.get("id", aid)))
+                    paper_author_rows.append({"paper_id": pid, "author_id": a.get("id", aid)})
             for iid, inst in authors_data.get("institutions", {}).items():
-                author_rows.append((
-                    inst.get("id", iid), inst.get("name", ""), "institution",
-                    inst.get("name", ""), inst.get("paper_count", 0), 0,
-                ))
+                author_rows.append({
+                    "author_id": inst.get("id", iid),
+                    "canonical_name": inst.get("name", ""),
+                    "type": "institution", "name_variants": inst.get("name", ""),
+                    "paper_count": inst.get("paper_count", 0),
+                    "owned_paper_count": 0,
+                })
                 for pid in inst.get("papers", []):
-                    paper_author_rows.append((pid, inst.get("id", iid)))
+                    paper_author_rows.append({"paper_id": pid, "author_id": inst.get("id", iid)})
 
-        con.execute("DROP TABLE IF EXISTS paper_authors")
-        con.execute("DROP TABLE IF EXISTS authors")
-        con.execute("""
-            CREATE TABLE authors (
-                author_id VARCHAR PRIMARY KEY,
-                canonical_name VARCHAR,
-                type VARCHAR,
-                name_variants VARCHAR,
-                paper_count INTEGER,
-                owned_paper_count INTEGER
-            )
-        """)
-        if author_rows:
-            con.executemany("INSERT INTO authors VALUES (?,?,?,?,?,?)", author_rows)
-        con.execute("CREATE TABLE paper_authors (paper_id VARCHAR, author_id VARCHAR)")
-        if paper_author_rows:
-            con.executemany("INSERT INTO paper_authors VALUES (?,?)", paper_author_rows)
+        _bulk_load(con, "authors", author_rows,
+            "author_id VARCHAR, canonical_name VARCHAR, type VARCHAR, "
+            "name_variants VARCHAR, paper_count INTEGER, owned_paper_count INTEGER")
+        _bulk_load(con, "paper_authors", paper_author_rows,
+            "paper_id VARCHAR, author_id VARCHAR")
         con.execute("CREATE INDEX IF NOT EXISTS idx_paper_authors_pid ON paper_authors(paper_id)")
         con.execute("CREATE INDEX IF NOT EXISTS idx_paper_authors_aid ON paper_authors(author_id)")
 

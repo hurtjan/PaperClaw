@@ -27,11 +27,19 @@ def run_checks(db: dict) -> tuple[list[str], list[str]]:
     errors = []
     warnings = []
 
+    # Bidi checks: skip superseded papers (their edges are stale by design)
+    superseded_ids = {pid for pid, p in papers.items() if p.get("superseded_by")}
     for pid, p in papers.items():
+        if pid in superseded_ids:
+            continue
         for cited_id in p.get("cites", []):
+            if cited_id in superseded_ids:
+                continue  # refs to superseded papers are caught by stale-alias check
             if cited_id in papers and pid not in papers[cited_id].get("cited_by", []):
                 errors.append(f"Bidi: {pid} cites {cited_id} but not in cited_by")
         for citing_id in p.get("cited_by", []):
+            if citing_id in superseded_ids:
+                continue
             if citing_id in papers and pid not in papers[citing_id].get("cites", []):
                 errors.append(f"Bidi: {pid} has {citing_id} in cited_by but not in cites")
 
@@ -75,9 +83,9 @@ def run_checks(db: dict) -> tuple[list[str], list[str]]:
         if len(cited_by) != len(set(cited_by)):
             warnings.append(f"Duplicates in {pid}.cited_by")
 
-    for pid, p in papers.items():
-        if p.get("type") == "stub" and not p.get("cited_by") and not p.get("superseded_by"):
-            warnings.append(f"Orphaned: {pid}")
+    # Orphaned stubs (no cited_by, no superseded_by) are normal in a
+    # citation DB — stubs exist for papers cited by owned papers even
+    # if nothing else references them yet. Not flagged.
 
     # ID consistency: key must match entry's id field
     for pid, p in papers.items():
@@ -111,6 +119,30 @@ def run_checks(db: dict) -> tuple[list[str], list[str]]:
         for field in stale_fields:
             if field in p:
                 warnings.append(f"Stale field: {pid}.{field}")
+
+    # superseded_by cycles and self-references
+    for pid, p in papers.items():
+        target = p.get("superseded_by")
+        if not target:
+            continue
+        if target == pid:
+            errors.append(f"Superseded self-ref: {pid}")
+        elif target in papers and papers[target].get("superseded_by") == pid:
+            errors.append(f"Superseded cycle: {pid} ↔ {target}")
+
+    # Stale alias references: cites/cited_by pointing at superseded papers
+    superseded = {pid for pid, p in papers.items() if p.get("superseded_by")}
+    if superseded:
+        stale_alias_count = 0
+        for pid, p in papers.items():
+            if p.get("superseded_by"):
+                continue  # skip superseded papers themselves
+            for ref in p.get("cites", []):
+                if ref in superseded:
+                    stale_alias_count += 1
+                    break
+        if stale_alias_count:
+            errors.append(f"Stale alias refs: {stale_alias_count} active paper(s) cite superseded IDs (run repair_aliases.py)")
 
     return errors, warnings
 

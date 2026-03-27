@@ -25,7 +25,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from litdb import export_json, is_owned
+from litdb import export_json, is_owned, fast_loads
+from merge_extractions import merge_extraction_files
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 DEFAULT_PLAN_FILE = ROOT / "data" / "tmp" / "duplicate_merge_plan.json"
@@ -33,7 +34,7 @@ DEFAULT_PLAN_FILE = ROOT / "data" / "tmp" / "duplicate_merge_plan.json"
 # Fields eligible for one-way enrichment (fill if canonical is empty/None)
 ENRICHABLE_FIELDS = (
     "doi", "s2_paper_id", "forward_cited_by", "abstract",
-    "journal", "authors", "year", "title",
+    "journal", "authors", "year", "title", "extraction_file",
 )
 
 
@@ -114,34 +115,8 @@ def do_merge(papers: dict, canonical_id: str, alias_ids: list,
                 if not dry_run:
                     canonical.setdefault("cited_by", []).append(citing_id)
 
-    # Step 3: Rewrite references globally — replace alias IDs with canonical ID
-    for pid, paper in papers.items():
-        if pid in alias_id_set or pid == canonical_id:
-            continue
-
-        needs_cites_rewrite = any(c in alias_id_set for c in paper.get("cites", []))
-        needs_cited_by_rewrite = any(c in alias_id_set for c in paper.get("cited_by", []))
-
-        if needs_cites_rewrite or needs_cited_by_rewrite:
-            summary["references_rewritten"] += 1
-            if not dry_run:
-                new_cites = []
-                seen = set()
-                for c in paper.get("cites", []):
-                    target = canonical_id if c in alias_id_set else c
-                    if target not in seen:
-                        new_cites.append(target)
-                        seen.add(target)
-                paper["cites"] = new_cites
-
-                new_cited_by = []
-                seen = set()
-                for c in paper.get("cited_by", []):
-                    target = canonical_id if c in alias_id_set else c
-                    if target not in seen:
-                        new_cited_by.append(target)
-                        seen.add(target)
-                paper["cited_by"] = new_cited_by
+    # Step 3: Reference rewriting is done in a single batch pass after all merges
+    # (see _batch_rewrite_references below)
 
     # Step 4: Set version links
     summary["version_links_set"] = list(all_alias_ids)
@@ -153,7 +128,78 @@ def do_merge(papers: dict, canonical_id: str, alias_ids: list,
             alias = papers.get(alias_id, {})
             alias["superseded_by"] = canonical_id
 
+    # Step 5: Merge extraction files
+    ext_summary = merge_extraction_files(canonical_id, all_alias_ids, dry_run=dry_run)
+    summary["extraction_merge"] = ext_summary
+    if ext_summary["action"] != "noop" and ext_summary["canonical_file"] and not dry_run:
+        canonical["extraction_file"] = ext_summary["canonical_file"]
+
     return summary
+
+
+def _batch_rewrite_references(papers: dict, merges: list[dict]) -> int:
+    """Rewrite all alias→canonical references in a single pass over all papers.
+
+    Returns the number of papers whose references were rewritten.
+    """
+    # Build unified remap: alias_id → canonical_id (including transitive aliases)
+    remap: dict[str, str] = {}
+    all_alias_ids: set[str] = set()
+    all_canonical_ids: set[str] = set()
+
+    for merge in merges:
+        canonical_id = merge["canonical_id"]
+        all_canonical_ids.add(canonical_id)
+        for alias_id in merge["alias_ids"]:
+            remap[alias_id] = canonical_id
+            all_alias_ids.add(alias_id)
+        # Also remap transitive aliases from papers
+        for alias_id in merge["alias_ids"]:
+            alias = papers.get(alias_id, {})
+            for sub_alias in alias.get("aliases", []):
+                if sub_alias not in all_canonical_ids:
+                    remap[sub_alias] = canonical_id
+                    all_alias_ids.add(sub_alias)
+
+    skip_ids = all_alias_ids | all_canonical_ids
+    rewritten = 0
+
+    for pid, paper in papers.items():
+        if pid in skip_ids:
+            continue
+
+        needs_rewrite = False
+        for c in paper.get("cites", []):
+            if c in remap:
+                needs_rewrite = True
+                break
+        if not needs_rewrite:
+            for c in paper.get("cited_by", []):
+                if c in remap:
+                    needs_rewrite = True
+                    break
+
+        if needs_rewrite:
+            rewritten += 1
+            new_cites = []
+            seen = set()
+            for c in paper.get("cites", []):
+                target = remap.get(c, c)
+                if target not in seen:
+                    new_cites.append(target)
+                    seen.add(target)
+            paper["cites"] = new_cites
+
+            new_cited_by = []
+            seen = set()
+            for c in paper.get("cited_by", []):
+                target = remap.get(c, c)
+                if target not in seen:
+                    new_cited_by.append(target)
+                    seen.add(target)
+            paper["cited_by"] = new_cited_by
+
+    return rewritten
 
 
 def _run_script(script_name: str) -> bool:
@@ -185,7 +231,7 @@ def main():
         print(f"ERROR: merge plan not found: {plan_file}", file=sys.stderr)
         sys.exit(1)
 
-    plan = json.loads(plan_file.read_text())
+    plan = fast_loads(plan_file.read_text())
     merges = plan.get("merges", [])
 
     if not merges:
@@ -196,7 +242,7 @@ def main():
         print("ERROR: data/db/papers.json not found.", file=sys.stderr)
         sys.exit(1)
 
-    db = json.loads(PAPERS_FILE.read_text())
+    db = fast_loads(PAPERS_FILE.read_text())
     papers = db["papers"]
 
     prefix = "[DRY RUN] " if args.dry_run else ""
@@ -267,14 +313,28 @@ def main():
             links = ", ".join(summary["version_links_set"])
             print(f"  Version links: {links} → superseded_by {canonical_id}")
 
+        ext_merge = summary.get("extraction_merge", {})
+        if ext_merge.get("action") != "noop":
+            action = ext_merge["action"]
+            archived = ext_merge.get("archived", [])
+            print(f"  Extraction: {action} → {ext_merge.get('canonical_file', '?')}")
+            if archived:
+                print(f"  Archived: {len(archived)} alias extraction(s)")
+
         total_enriched += len(summary["enriched_fields"])
         total_edges += summary["edges_merged"]
         total_refs += summary["references_rewritten"]
 
+    # Batch rewrite all alias→canonical references in one pass
+    if not args.dry_run:
+        total_refs = _batch_rewrite_references(papers, merges)
+        if total_refs:
+            print(f"\nBatch reference rewrite: {total_refs} paper(s) updated")
+
     if args.dry_run:
         print(
             f"\n[DRY RUN] Would enrich {total_enriched} field(s), "
-            f"merge {total_edges} edge(s), rewrite refs in {total_refs} paper(s)"
+            f"merge {total_edges} edge(s)"
         )
         return
 

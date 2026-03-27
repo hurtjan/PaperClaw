@@ -59,5 +59,5 @@ Given a text file path and a paper ID:
 - Extract 3–8 claims — focus on the paper's actual contributions, not background statements
 - Extract 5–15 keywords
 - `topics.primary`: 1–3 high-level domain areas; `topics.secondary`: 2–5 more specific sub-areas
-- Do NOT read or touch `data/extractions/{paper_id}.json` — write only to the sidecar
+- Write only to the `.analysis.json` sidecar
 - After writing, print: `DONE paper_id={id} claims={N} keywords={N}`

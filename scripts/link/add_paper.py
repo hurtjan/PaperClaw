@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from litdb import normalize_doi, export_json, is_owned
+from litdb import normalize_doi, export_json, is_owned, fast_loads
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 
@@ -32,16 +32,14 @@ def main():
     if not extraction_path.is_absolute():
         extraction_path = ROOT / extraction_path
 
-    with open(extraction_path) as f:
-        ext = json.load(f)
+    ext = fast_loads(extraction_path.read_text())
 
     from_id = ext["id"]
 
     if not PAPERS_FILE.exists():
         PAPERS_FILE.parent.mkdir(parents=True, exist_ok=True)
         PAPERS_FILE.write_text('{"metadata": {}, "papers": {}}')
-    with open(PAPERS_FILE) as f:
-        db = json.load(f)
+    db = fast_loads(PAPERS_FILE.read_text())
 
     papers = db["papers"]
     print(f"Adding paper: {from_id}")
@@ -72,7 +70,7 @@ def main():
 
     # Add or upgrade the paper entry
     if from_id not in papers:
-        papers[from_id] = {"id": from_id, **owned_fields, "cites": [], "cited_by": []}
+        papers[from_id] = {"id": from_id, **owned_fields, "cites": [], "cited_by": [], "dedup_pending": True}
         print(f"  Added new owned paper")
     else:
         existing = papers[from_id]
@@ -101,6 +99,7 @@ def main():
             "journal": cit.get("journal", ""),
             "doi": normalize_doi(cit.get("doi")),
             "cites": [], "cited_by": [],
+            "dedup_pending": True,
         }
         new_entries += 1
     print(f"  New stub entries: {new_entries}")

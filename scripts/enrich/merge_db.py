@@ -19,6 +19,7 @@ import json
 import shutil
 import subprocess
 import sys
+import zipfile
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -26,7 +27,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from litdb import export_json
+from litdb import export_json, fast_loads
+try:
+    from db import repair_bidi_sql, resolve_aliases_in_edges, _build_alias_remap
+    _HAS_DUCKDB_ACCEL = True
+except ImportError:
+    _HAS_DUCKDB_ACCEL = False
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 CONTEXTS_FILE = ROOT / "data" / "db" / "contexts.json"
@@ -105,34 +111,103 @@ def _merge_paper_enrich(local_papers, pid, local_entry, ext_entry, name):
     return "skipped"
 
 
-def _repair_bidi(papers):
-    """Enforce bidirectional cites/cited_by, remove dangling refs, deduplicate."""
-    all_ids = set(papers.keys())
+def _build_alias_remap_local(papers):
+    """Build alias→canonical remap from superseded_by links (transitive).
 
-    # Remove dangling references and self-citations
-    for p in papers.values():
-        pid = p.get("id", "")
+    Handles cycles by dropping cyclic entries.
+    """
+    remap = {}
+    for pid, p in papers.items():
+        target = p.get("superseded_by")
+        if target and target in papers and target != pid:
+            remap[pid] = target
+    for alias in list(remap.keys()):
+        visited = {alias}
+        current = remap.get(alias)
+        while current and current in remap:
+            if current in visited:
+                for node in visited:
+                    remap.pop(node, None)
+                break
+            visited.add(current)
+            current = remap.get(current)
+        else:
+            if current:
+                for node in visited:
+                    if node in remap:
+                        remap[node] = current
+    return remap
+
+
+def _resolve_aliases_local(papers, remap):
+    """Rewrite alias IDs in all cites/cited_by to their canonical."""
+    if not remap:
+        return
+    for pid, p in papers.items():
+        for field in ("cites", "cited_by"):
+            old = p.get(field, [])
+            new = []
+            seen = set()
+            for ref in old:
+                target = remap.get(ref, ref)
+                if target == pid:
+                    continue
+                if target not in seen:
+                    new.append(target)
+                    seen.add(target)
+            if new != old:
+                p[field] = new
+
+
+def _repair_bidi(papers):
+    """Enforce bidirectional cites/cited_by, remove dangling refs, deduplicate.
+
+    Resolves alias references first, then uses set-based lookups for O(1)
+    membership checks instead of O(n) list scans. Superseded papers are
+    excluded from bidi propagation.
+    """
+    # Resolve alias→canonical in all edges before repairing
+    remap = _build_alias_remap_local(papers)
+    if remap:
+        _resolve_aliases_local(papers, remap)
+
+    all_ids = set(papers.keys())
+    superseded_ids = set(remap.keys()) if remap else set()
+    active_ids = all_ids - superseded_ids
+
+    # Remove dangling references and self-citations (active papers only)
+    for pid in active_ids:
+        p = papers[pid]
         if "cites" in p:
-            p["cites"] = [c for c in p["cites"] if c in all_ids and c != pid]
+            p["cites"] = [c for c in p["cites"] if c in active_ids and c != pid]
         if "cited_by" in p:
-            p["cited_by"] = [c for c in p["cited_by"] if c in all_ids and c != pid]
+            p["cited_by"] = [c for c in p["cited_by"] if c in active_ids and c != pid]
+
+    # Build set-based lookup for O(1) membership checks
+    cites_sets: dict[str, set] = {}
+    cited_by_sets: dict[str, set] = {}
+    for pid in active_ids:
+        p = papers[pid]
+        cites_sets[pid] = set(p.get("cites", []))
+        cited_by_sets[pid] = set(p.get("cited_by", []))
 
     # Forward: A.cites B → B.cited_by must include A
-    for pid, p in papers.items():
-        for cited_id in p.get("cites", []):
-            cited = papers[cited_id]
-            if pid not in cited.get("cited_by", []):
-                cited.setdefault("cited_by", []).append(pid)
+    for pid in active_ids:
+        for cited_id in cites_sets[pid]:
+            if pid not in cited_by_sets[cited_id]:
+                cited_by_sets[cited_id].add(pid)
+                papers[cited_id].setdefault("cited_by", []).append(pid)
 
     # Reverse: A in B.cited_by → A.cites must include B
-    for pid, p in papers.items():
-        for citing_id in p.get("cited_by", []):
-            citing = papers[citing_id]
-            if pid not in citing.get("cites", []):
-                citing.setdefault("cites", []).append(pid)
+    for pid in active_ids:
+        for citing_id in cited_by_sets[pid]:
+            if pid not in cites_sets[citing_id]:
+                cites_sets[citing_id].add(pid)
+                papers[citing_id].setdefault("cites", []).append(pid)
 
-    # Deduplicate
-    for p in papers.values():
+    # Deduplicate (active papers only)
+    for pid in active_ids:
+        p = papers[pid]
         if "cites" in p:
             p["cites"] = list(dict.fromkeys(p["cites"]))
         if "cited_by" in p:
@@ -157,11 +232,11 @@ def _merge_contexts(source_contexts_file):
 
     # Load local contexts (freshly built)
     if CONTEXTS_FILE.exists():
-        local_ctx = json.loads(CONTEXTS_FILE.read_text())
+        local_ctx = fast_loads(CONTEXTS_FILE.read_text())
     else:
         local_ctx = {"generated": str(date.today()), "by_cited": {}, "by_purpose": {}}
 
-    ext_ctx = json.loads(source_contexts_file.read_text())
+    ext_ctx = fast_loads(source_contexts_file.read_text())
     ext_by_cited = ext_ctx.get("by_cited", {})
 
     # Track existing (citing, cited) pairs to avoid duplicates
@@ -187,7 +262,7 @@ def _merge_contexts(source_contexts_file):
     local_ctx["by_purpose"] = dict(by_purpose)
 
     # Rebuild owned_papers and counts from papers.json
-    papers_db = json.loads(PAPERS_FILE.read_text())
+    papers_db = fast_loads(PAPERS_FILE.read_text())
     papers = papers_db["papers"]
     owned_papers = sorted([
         {
@@ -225,14 +300,50 @@ def main():
 
     source = Path(args.source_dir).resolve()
     if not source.exists():
-        print(f"ERROR: source dir not found: {source}", file=sys.stderr)
+        print(f"ERROR: source not found: {source}", file=sys.stderr)
         sys.exit(1)
 
-    name = args.name or source.name
+    # Handle .paperclaw archives: extract to db_imports and continue
+    source_extractions_dir = None
+    is_archive = source.suffix == ".paperclaw"
+    if is_archive:
+        name = args.name or source.stem
+        extract_dir = DB_IMPORTS_DIR / name
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Extracting .paperclaw archive to: data/db_imports/{name}/")
+        with zipfile.ZipFile(source, "r") as zf:
+            # Validate manifest
+            try:
+                manifest = fast_loads(zf.read("manifest.json"))
+            except (KeyError, json.JSONDecodeError):
+                print("ERROR: invalid .paperclaw archive (missing or bad manifest.json)", file=sys.stderr)
+                sys.exit(1)
+            if manifest.get("format_version") != 1:
+                print(f"ERROR: unsupported format_version: {manifest.get('format_version')}", file=sys.stderr)
+                sys.exit(1)
+            print(f"  Source user:   {manifest.get('source_user', 'unknown')}")
+            print(f"  Exported at:   {manifest.get('exported_at', 'unknown')}")
+            stats = manifest.get("stats", {})
+            print(f"  Owned papers:  {stats.get('owned_count', '?')}")
+            print(f"  Extractions:   {stats.get('extraction_count', '?')}")
+            zf.extractall(extract_dir)
+        source = extract_dir
+        # Extraction files are at extractions/ inside the archive
+        arch_ext = extract_dir / "extractions"
+        if arch_ext.exists() and any(arch_ext.iterdir()):
+            source_extractions_dir = arch_ext
 
-    # Source path: try data/db/ first, then top-level
+    if not is_archive:
+        name = args.name or source.name
+
+    # Source path: try data/db/ first, then db/ (paperclaw archive), then top-level
     source_papers_file = source / "data" / "db" / "papers.json"
     source_index_file = source / "data" / "db" / "contexts.json"
+    if not source_papers_file.exists():
+        alt = source / "db" / "papers.json"
+        if alt.exists():
+            source_papers_file = alt
+            source_index_file = source / "db" / "contexts.json"
     if not source_papers_file.exists():
         alt = source / "papers.json"
         if alt.exists():
@@ -246,11 +357,11 @@ def main():
     print(f"Importing from: {source_papers_file}")
     print(f"Import name:    {name}")
 
-    source_db = json.loads(source_papers_file.read_text())
+    source_db = fast_loads(source_papers_file.read_text())
     source_papers = source_db.get("papers", {})
     print(f"Source papers:  {len(source_papers)}")
 
-    local_db = json.loads(PAPERS_FILE.read_text())
+    local_db = fast_loads(PAPERS_FILE.read_text())
     local_papers = local_db["papers"]
 
     added_owned = 0
@@ -258,6 +369,7 @@ def main():
     skipped = 0
     updated = 0
     enriched = 0
+    added_paper_ids = set()
 
     for pid, paper in source_papers.items():
         ptype = paper.get("type", "")
@@ -271,6 +383,7 @@ def main():
                 if action.startswith("enriched"):
                     enriched += 1
                 elif action == "upgraded_stub":
+                    added_paper_ids.add(pid)
                     updated += 1
                 else:
                     skipped += 1
@@ -291,10 +404,12 @@ def main():
             entry["source_db"] = name
             local_papers[pid] = entry
 
+            added_paper_ids.add(pid)
             if was_existing:
                 updated += 1
             else:
                 added_owned += 1
+                entry["dedup_pending"] = True
 
         elif ptype in ("stub", "cited_only"):
             existing = local_papers.get(pid)
@@ -313,11 +428,17 @@ def main():
 
             entry = dict(clean_paper)
             entry["type"] = "stub"
+            entry["dedup_pending"] = True
             local_papers[pid] = entry
             added_cites += 1
 
     # Post-merge repairs
-    _repair_bidi(local_papers)
+    if _HAS_DUCKDB_ACCEL:
+        edges = repair_bidi_sql(local_papers)
+        if edges:
+            print(f"  Bidi repair (accelerated): {edges} edges added")
+    else:
+        _repair_bidi(local_papers)
 
     owned_count = sum(1 for p in local_papers.values()
                       if p.get("type") in ("owned", "external_owned"))
@@ -347,6 +468,20 @@ def main():
     if source_index_file.exists() and source_index_file.resolve() != (import_dir / "contexts.json").resolve():
         shutil.copy2(str(source_index_file), str(import_dir / "contexts.json"))
         print(f"Copied contexts.json  → data/db_imports/{name}/contexts.json")
+
+    # Copy extraction files for added papers
+    if source_extractions_dir and source_extractions_dir.exists():
+        ext_dest = import_dir / "extractions"
+        ext_dest.mkdir(parents=True, exist_ok=True)
+        copied_ext = 0
+        for ext_file in sorted(source_extractions_dir.glob("*.json")):
+            # Match extraction filename to paper ID (filename is {paper_id}.json)
+            ext_pid = ext_file.stem
+            if ext_pid in added_paper_ids:
+                shutil.copy2(str(ext_file), str(ext_dest / ext_file.name))
+                copied_ext += 1
+        if copied_ext:
+            print(f"\nCopied {copied_ext} extraction files → data/db_imports/{name}/extractions/")
 
     # Context merging
     ctx_source = import_dir / "contexts.json"

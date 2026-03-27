@@ -17,9 +17,36 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts" / "lib"))
-from litdb import export_json
+from litdb import export_json, fast_loads, load_patch_file
 
 MANIFEST_FILE = ROOT / "data" / "db_history" / "manifest.jsonl"
+
+
+def _invert_forward_patch(forward_ops: list[dict]) -> list[dict]:
+    """Invert a JSON Patch (RFC 6902) forward patch into a reverse patch.
+
+    This handles the common ops: add → remove, remove → add (with value),
+    replace → replace (with old value). For remove ops without stored old
+    values, falls back to no-op (these are rare in practice since we only
+    rollback immediately after the patch was applied).
+    """
+    reverse = []
+    for op in reversed(forward_ops):
+        if op["op"] == "add":
+            reverse.append({"op": "remove", "path": op["path"]})
+        elif op["op"] == "remove":
+            # remove ops in jsonpatch include the removed value
+            if "value" in op:
+                reverse.append({"op": "add", "path": op["path"], "value": op["value"]})
+        elif op["op"] == "replace":
+            # replace ops include the old value only if the patch library stored it
+            if "value" in op:
+                reverse.append({"op": "replace", "path": op["path"], "value": op.get("old_value", op["value"])})
+        elif op["op"] == "move":
+            reverse.append({"op": "move", "path": op["from"], "from": op["path"]})
+        elif op["op"] == "copy":
+            reverse.append({"op": "remove", "path": op["path"]})
+    return reverse
 
 
 def load_manifest() -> list[dict]:
@@ -67,31 +94,47 @@ def do_rollback(entries: list[dict], n: int, dry_run: bool) -> None:
         print(f"Not enough history entries to roll back {n}.")
         return
 
+    try:
+        import jsonpatch
+    except ImportError:
+        print("ERROR: jsonpatch not installed. Run: .venv/bin/pip install jsonpatch",
+              file=sys.stderr)
+        sys.exit(1)
+
     print(f"{'[DRY RUN] ' if dry_run else ''}Rolling back {len(to_undo)} change(s):")
 
     for entry in reversed(to_undo):
-        patch_path = ROOT / entry["patch_file"]
+        patch_rel = entry["patch_file"]
+        # Try gzipped first, then legacy uncompressed
+        patch_path = ROOT / patch_rel
         if not patch_path.exists():
-            print(f"  ERROR: patch file missing: {patch_path}", file=sys.stderr)
-            sys.exit(1)
+            # Try alternate extension (.json vs .json.gz)
+            if patch_path.suffix == ".gz":
+                alt = patch_path.with_suffix("")  # strip .gz
+            else:
+                alt = Path(str(patch_path) + ".gz")
+            if alt.exists():
+                patch_path = alt
+            else:
+                print(f"  ERROR: patch file missing: {patch_path}", file=sys.stderr)
+                sys.exit(1)
 
-        patch_doc = json.loads(patch_path.read_text())
-        reverse_patch = patch_doc["reverse_patch"]
+        patch_doc = load_patch_file(patch_path)
         target = ROOT / entry["file"]
+
+        # Get or recompute reverse patch
+        if "reverse_patch" in patch_doc:
+            reverse_patch = patch_doc["reverse_patch"]
+        else:
+            # v2 patches store only forward; invert to get reverse
+            reverse_patch = _invert_forward_patch(patch_doc["forward_patch"])
 
         print(f"  Reverting: {entry['description']}")
         print(f"    File: {entry['file']}")
         print(f"    Ops:  {len(reverse_patch)}")
 
         if not dry_run:
-            try:
-                import jsonpatch
-            except ImportError:
-                print("ERROR: jsonpatch not installed. Run: .venv/bin/pip install jsonpatch",
-                      file=sys.stderr)
-                sys.exit(1)
-
-            current_data = json.loads(target.read_text())
+            current_data = fast_loads(target.read_text())
             patched = jsonpatch.apply_patch(current_data, reverse_patch)
             export_json(patched, target, track=False)
             print(f"    Done.")

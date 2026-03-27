@@ -44,5 +44,5 @@ Given a text file path and a paper ID:
 - `heading`: use the paper's actual heading text; normalize capitalization
 - `summary`: 2–4 sentences capturing the section's purpose and key content — write at the level of a structured abstract
 - `annotated_text`: condensed version of the section text with inline bracketed annotations like `[establishes X]`, `[key result]`, `[caveat]`, `[method step N]`. Aim for 150–300 words per section. Quote key sentences verbatim; paraphrase the rest.
-- Do NOT read or touch `data/extractions/{paper_id}.json` — write only to the sidecar
+- Write only to the `.sections.json` sidecar
 - After writing, print: `DONE paper_id={id} sections={N}`
