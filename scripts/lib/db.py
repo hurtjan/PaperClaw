@@ -416,7 +416,7 @@ def resolve_aliases_in_edges(papers_data: dict,
     rewritten = 0
     for pid, p in papers_data.items():
         changed = False
-        for field in ("cites", "cited_by"):
+        for field in ("cites", "cited_by", "forward_cited_by"):
             old = p.get(field, [])
             new = []
             seen = set()

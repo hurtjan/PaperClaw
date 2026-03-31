@@ -8,7 +8,7 @@ Usage:
 Reads:  data/tmp/duplicate_resolved.txt
 Writes: data/tmp/duplicate_merge_plan.json
 Runs:   scripts/build/merge_duplicates.py [--dry-run]
-        scripts/query/duckdb_query.py rebuild
+        scripts/build/build_duckdb.py
 """
 
 import argparse
@@ -140,8 +140,7 @@ def main():
     # Rebuild DuckDB query index
     rebuild_cmd = [
         sys.executable,
-        str(ROOT / "scripts" / "query" / "duckdb_query.py"),
-        "rebuild",
+        str(ROOT / "scripts" / "build" / "build_duckdb.py"),
     ]
     result = subprocess.run(rebuild_cmd, cwd=ROOT, capture_output=True, text=True)
     if result.stdout:
@@ -149,7 +148,7 @@ def main():
     if result.returncode != 0:
         if result.stderr:
             print(result.stderr.rstrip(), file=sys.stderr)
-        print("WARN: duckdb_query.py rebuild failed (non-fatal)", file=sys.stderr)
+        print("WARN: build_duckdb.py failed (non-fatal)", file=sys.stderr)
 
     print("STOP — duplicate resolution complete.")
 

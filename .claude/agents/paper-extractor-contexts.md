@@ -34,13 +34,13 @@ The top-level key MUST be `citations`. Write this JSON and nothing else to the o
 {
   "citations": [
     {
-      "id": "watts_1998_collective",
+      "id": "author_year_word",
       "contexts": [
         {
           "section": "Introduction",
           "purpose": "background",
-          "quote": "Scale-free networks have been shown to emerge...",
-          "explanation": "Cited to establish the theoretical framework of scale-free networks."
+          "quote": "Sentence containing the citation...",
+          "explanation": "1-2 sentences on why the author cites this work."
         }
       ]
     }

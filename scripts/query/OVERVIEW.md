@@ -34,8 +34,8 @@ All scripts run from project root with `.venv/bin/python3 scripts/query/<script>
 ## DuckDB quick reference
 
 ```
-# First run auto-builds the DB; rebuild after adding papers:
-.venv/bin/python3 scripts/query/duckdb_query.py rebuild
+# Build (or rebuild) the DB after adding papers:
+.venv/bin/python3 scripts/build/build_duckdb.py [--fts] [--force]
 
 # Most useful commands:
 duckdb_query.py search-all "<topic>"          # broad overview

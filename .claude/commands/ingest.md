@@ -186,7 +186,7 @@ This creates the owned paper entry + citation stubs + edges. No matching, no age
 
 ## Phase 4 — Database Rebuild
 
-1. `.venv/bin/python3 scripts/query/duckdb_query.py rebuild` — rebuild DuckDB (skips FTS for speed). Relay the `FTS index:` status line from the output to the user.
+1. `.venv/bin/python3 scripts/build/build_duckdb.py` — rebuild DuckDB (skips FTS for speed). Relay the `FTS index:` status line from the output to the user.
 
 **Paths:** `data/db/contexts.json`, `data/db/lit.duckdb`
 

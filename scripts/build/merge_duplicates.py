@@ -91,6 +91,23 @@ def do_merge(papers: dict, canonical_id: str, alias_ids: list,
             [f"{f} (from {alias_id})" for f in enriched]
         )
 
+    # Step 1b: Upgrade canonical type if any alias has a richer type
+    TYPE_UP = {"owned": 3, "external_owned": 2, "stub": 1}
+    canon_priority = TYPE_UP.get(canonical.get("type", "stub"), 0)
+    best_type = canonical.get("type", "stub")
+    for alias_id in all_alias_ids:
+        alias = papers.get(alias_id, {})
+        alias_type = alias.get("type", "stub")
+        alias_priority = TYPE_UP.get(alias_type, 0)
+        # Upgrade to external_owned but not to owned (owned implies local PDF/text)
+        if alias_priority > canon_priority and alias_type != "owned":
+            best_type = alias_type
+            canon_priority = alias_priority
+    if best_type != canonical.get("type", "stub"):
+        if not dry_run:
+            canonical["type"] = best_type
+        summary["enriched_fields"].append(f"type → {best_type}")
+
     # Step 2: Merge graph edges from all aliases (including transitive) into canonical
     # Track current state to avoid double-counting (matters in dry_run too)
     current_cites = set(canonical.get("cites", []))

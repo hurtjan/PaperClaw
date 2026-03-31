@@ -18,7 +18,7 @@ Always invoke agents via the Agent tool, never via Bash.
 
 ### Fuzzy matching handoff
 
-Python scores similarity and writes ranked candidates to `data/tmp/`. An agent reviews every candidate set — even singletons — and writes match decisions back to `data/tmp/`. Python reads decisions and applies DB writes.
+Python scores similarity → writes candidates to `data/tmp/` → agent reviews every set (even singletons) and writes decisions → Python applies DB writes.
 
 ### Output style
 
@@ -34,33 +34,25 @@ All scripts use `fast_loads()`/`fast_dumps()` from `litdb.py` (backed by `orjson
 
 ### Change tracking
 
-All writes to `papers.json`, `authors.json`, and `contexts.json` are tracked via two systems:
+All writes to `papers.json`, `authors.json`, and `contexts.json` are tracked via:
 
-1. **JSON Patch deltas** (gzipped, forward-only — reverse patches recomputed on demand):
-   - Patches stored in `data/db_history/patches/*.json.gz`, manifest in `data/db_history/manifest.jsonl`
-   - Rollback via `scripts/build/rollback.py`:
-     - `rollback.py` — view history
-     - `rollback.py --dry-run --last 1` — preview undo
-     - `rollback.py --last 1` — undo last change
-     - `rollback.py prune --keep 50` — trim old patches
-   - Full rebuilds (`build_authors.py`, `build_index.py`) skip patch tracking (too expensive, not useful)
-
-2. **DuckDB WAL** (`_changes` table in `data/db/lit.duckdb`):
-   - Lightweight change log written on every tracked `export_json()` call
-   - Queryable via `scripts/lib/db.py`: `get_change_history()`, `prune_change_history()`
+1. **JSON Patch deltas** — gzipped patches in `data/db_history/patches/`, manifest in `data/db_history/manifest.jsonl`. Rollback via `scripts/build/rollback.py --help`.
+2. **DuckDB WAL** — `_changes` table in `data/db/lit.duckdb`, queryable via `scripts/lib/db.py`.
 
 ### Incremental builds
 
-`build_index.py` and `build_authors.py` support incremental mode (default). They track which files/papers were processed and skip unchanged data on subsequent runs. Use `--force` for a full rebuild.
+`build_index.py`, `build_authors.py`, and `build_duckdb.py` are incremental by default; use `--force` for a full rebuild.
+
+Build pipeline order (all in `scripts/build/`):
+1. `build_index.py` → `data/db/contexts.json`
+2. `build_authors.py` → `data/db/authors.json`
+3. `build_duckdb.py [--fts]` → `data/db/lit.duckdb`
+
+`build_duckdb.py` must be run before `duckdb_query.py` — it will error with instructions if the DB is missing.
 
 ### DuckDB acceleration layer
 
-`scripts/lib/db.py` provides SQL-backed helpers for operations that are O(n²) in Python:
-- `find_candidate_pairs_sql()` — bucketed candidate generation with size caps
-- `batch_rewrite_references_sql()` — alias→canonical reference rewriting
-- `repair_bidi_sql()` — bidirectional edge repair with set-based lookups
-
-These are used automatically by `find_matches.py`, `merge_duplicates.py`, and `merge_db.py` when DuckDB is available.
+`scripts/lib/db.py` provides SQL-backed helpers for O(n²) operations (candidate generation, reference rewriting, bidirectional repair). Used automatically by `find_matches.py`, `merge_duplicates.py`, and `merge_db.py`.
 
 ## Skills
 
@@ -78,27 +70,12 @@ These are used automatically by `find_matches.py`, `merge_duplicates.py`, and `m
 
 ## Files & Customization
 
-### Core files (read-only)
+Core files are read-only during normal usage — only edit when the user explicitly enables **developer mode**:
+`.claude/agents/*.md`, `.claude/commands/*.md`, `.claude/settings.json`, `scripts/**/*.py`, `CLAUDE.md`, `requirements.txt` (all excluding `local-*` prefixed files).
 
-The following are core project files tracked in git. Do NOT modify them during normal usage — only edit when the user explicitly enables **developer mode** (e.g., "switch to developer mode", "I want to modify the pipeline"):
+If a bug or improvement is needed, inform the user rather than editing directly.
 
-- `.claude/agents/*.md` (excluding `local-*`)
-- `.claude/commands/*.md` (excluding `local-*`)
-- `.claude/settings.json`
-- `scripts/**/*.py`
-- `CLAUDE.md`
-- `requirements.txt`
-
-During normal operation (ingesting papers, querying, research), treat these as read-only. If a bug or improvement is needed, inform the user rather than editing directly.
-
-### Local extensions
-
-Core agents and commands are tracked in git. To add your own without conflicting with upstream updates, prefix filenames with `local-`:
-
-- `.claude/agents/local-my-agent.md` — custom agent (gitignored)
-- `.claude/commands/local-my-command.md` — custom command (gitignored)
-
-Core files use normal names and should not be modified locally. Pull upstream changes with `git pull`.
+Custom agents/commands: prefix with `local-` (e.g., `.claude/agents/local-*.md`) — these are gitignored and won't conflict with upstream.
 
 ## Auto-start
 

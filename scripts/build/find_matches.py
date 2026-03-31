@@ -135,11 +135,11 @@ def score_paper_pair(a: dict, b: dict) -> tuple[float, list[str], dict]:
                 score += 0.75
                 signals.append("title_prefix")
 
-    # First author match (+1.0)
+    # First author match (+0.5)
     a_first = _get_first_author_key(a)
     b_first = _get_first_author_key(b)
     if a_first and b_first and a_first == b_first:
-        score += 1.0
+        score += 0.5
         signals.append("first_author")
 
     # Author overlap — tiered by Jaccard + containment for partial lists
@@ -156,24 +156,24 @@ def score_paper_pair(a: dict, b: dict) -> tuple[float, list[str], dict]:
         min_size = min(len(a_authors), len(b_authors))
         author_containment = len(shared_authors) / min_size if min_size else 0.0
         if author_jaccard >= 0.80:
-            author_pts = 2.0
+            author_pts = 1.0
             signals.append("author_overlap_high")
         elif author_jaccard >= 0.50:
-            author_pts = 1.5
+            author_pts = 0.75
             signals.append("author_overlap")
         elif author_jaccard >= 0.30:
-            author_pts = 0.5
+            author_pts = 0.25
             signals.append("author_overlap_low")
         # Containment: stub has 1-2 authors fully contained in larger list
-        if author_pts < 1.0 and min_size <= 2 and max(len(a_authors), len(b_authors)) >= 3 and author_containment >= 1.0:
-            author_pts = 1.0
+        if author_pts < 0.5 and min_size <= 2 and max(len(a_authors), len(b_authors)) >= 3 and author_containment >= 1.0:
+            author_pts = 0.5
             signals.append("author_contained")
         score += author_pts
 
-    # Cap total author signals at +3.5
-    author_total = author_pts + (1.0 if "first_author" in signals else 0.0)
-    if author_total > 3.5:
-        score -= (author_total - 3.5)
+    # Cap total author signals at +1.5
+    author_total = author_pts + (0.5 if "first_author" in signals else 0.0)
+    if author_total > 1.5:
+        score -= (author_total - 1.5)
 
     # Year proximity
     a_yr = str(a.get("year", "")).strip()
@@ -191,18 +191,18 @@ def score_paper_pair(a: dict, b: dict) -> tuple[float, list[str], dict]:
             score += 0.1
             signals.append("year_near")
 
-    # Cited_by overlap (+1.5)
+    # Cited_by overlap (+0.75)
     cited_by_a = set(a.get("cited_by", []))
     cited_by_b = set(b.get("cited_by", []))
     shared_citers = cited_by_a & cited_by_b
     cited_by_jaccard = 0.0
     if cited_by_a and cited_by_b:
         cited_by_jaccard = len(shared_citers) / len(cited_by_a | cited_by_b)
-        if cited_by_jaccard >= 0.25 or len(shared_citers) >= 2:
-            score += 1.5
+        if cited_by_jaccard >= 0.30 and len(shared_citers) >= 3:
+            score += 0.75
             signals.append("cited_by_overlap")
 
-    # Cites overlap (up to +6.0 at >= 80% Jaccard)
+    # Cites overlap (up to +7.0 at >= 80% Jaccard)
     cites_a = set(a.get("cites", []))
     cites_b = set(b.get("cites", []))
     shared_cites = cites_a & cites_b
@@ -210,8 +210,11 @@ def score_paper_pair(a: dict, b: dict) -> tuple[float, list[str], dict]:
     if cites_a and cites_b:
         cites_jaccard = len(shared_cites) / len(cites_a | cites_b)
         if cites_jaccard >= 0.80:
-            score += 6.0
+            score += 7.0
             signals.append("cites_overlap_high")
+        elif cites_jaccard >= 0.60:
+            score += 5.0
+            signals.append("cites_overlap_strong")
         elif cites_jaccard >= 0.50:
             score += 4.0
             signals.append("cites_overlap_mid")
@@ -236,23 +239,55 @@ def score_paper_pair(a: dict, b: dict) -> tuple[float, list[str], dict]:
     return round(score, 1), signals, details
 
 
-def is_auto_match(signals: list[str], details: dict) -> bool:
+def is_s2_mismatch(a: dict, b: dict) -> bool:
+    """Return True if both papers have S2 IDs but they differ — never match."""
+    a_s2 = a.get("s2_paper_id")
+    b_s2 = b.get("s2_paper_id")
+    return bool(a_s2 and b_s2 and a_s2 != b_s2)
+
+
+def is_auto_match(signals: list[str], details: dict, score: float) -> bool:
     """Check if a pair qualifies for auto-merge (skips agent review).
 
-    Path 1: S2 ID or DOI match + title > 0.90
-    Path 2: Near-exact long title + first author + author overlap
+    Path 1: DOI or S2 ID match — auto merge unconditionally
+    Path 2: Near-exact long title (>=0.97 sim, >=40 chars) + corroborating score
+    Path 3: High cites overlap (>=0.80 Jaccard) + first author match
+    Path 4: High cites overlap (>=0.80 Jaccard) + reasonable title match (>=0.70)
+    """
+    # Path 1: identifier match
+    if "s2_id_match" in signals or "doi_match" in signals:
+        return True
+    title_sim = details.get("title_similarity", 0.0)
+    title_len = details.get("_title_len", 0)
+    cites_j = details.get("cites_jaccard", 0.0)
+    # Path 2: near-exact long title + at least one corroborating signal
+    if title_sim >= 0.97 and title_len >= 40 and score > 6.0:
+        return True
+    # Path 3: shared reference lists + first author
+    if cites_j >= 0.80 and "first_author" in signals and score > 5.0:
+        return True
+    # Path 4: shared reference lists + reasonable title match
+    if cites_j >= 0.80 and title_sim >= 0.70:
+        return True
+    return False
+
+
+def is_auto_skip(signals: list[str], details: dict, score: float) -> bool:
+    """Check if a pair can safely be auto-skipped (no agent review needed).
+
+    These are pairs that score above threshold due to author overlap alone,
+    with no corroborating title or citation evidence.
     """
     title_sim = details.get("title_similarity", 0.0)
-    # Path 1: identifier match + title confirmation
-    if ("s2_id_match" in signals or "doi_match" in signals) and title_sim > 0.90:
+    cites_j = details.get("cites_jaccard", 0.0)
+    # Rule 1: author-only pairs — low title, no cites, low score
+    if title_sim < 0.50 and cites_j == 0.0 and score < 4.0:
         return True
-    # Path 2: near-exact title (long enough) + author evidence
-    title_len = details.get("_title_len", 0)
-    has_author_overlap = any(s.startswith("author_overlap") or s == "author_contained" for s in signals)
-    if (title_sim >= 0.97
-            and title_len >= 30
-            and "first_author" in signals
-            and has_author_overlap):
+    # Rule 2: very different titles with no identifier/cites evidence
+    if (title_sim < 0.30
+            and "doi_match" not in signals
+            and "s2_id_match" not in signals
+            and cites_j < 0.50):
         return True
     return False
 
@@ -650,10 +685,10 @@ def apply_auto_merges(auto_groups: list[dict]) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="Unified paper matching")
-    parser.add_argument("--threshold", type=float, default=3.0,
-                        help="Minimum score to report (default: 3.0)")
-    parser.add_argument("--limit", type=int, default=50,
-                        help="Max groups to output (default: 50)")
+    parser.add_argument("--threshold", type=float, default=3.5,
+                        help="Minimum score to report (default: 3.5)")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Max groups to output (default: 50, or 200 in --full mode)")
     parser.add_argument("--max-group-size", type=int, default=10,
                         help="Max papers per group (default: 10)")
     parser.add_argument("--json", action="store_true",
@@ -663,6 +698,8 @@ def main():
     parser.add_argument("--skip-file", metavar="FILE",
                         help="File of already-decided pairs to exclude (one 'id1|||id2' per line)")
     args = parser.parse_args()
+    if args.limit is None:
+        args.limit = 200 if args.full else 50
 
     if not PAPERS_FILE.exists():
         print("ERROR: data/db/papers.json not found.", file=sys.stderr)
@@ -705,6 +742,7 @@ def main():
 
     # Score each candidate pair
     auto_match_pairs: list[dict] = []
+    auto_skip_pairs: list[dict] = []
     judgment_pairs: list[dict] = []
     pair_score_map: dict[frozenset, dict] = {}
 
@@ -712,9 +750,13 @@ def main():
         a_id, b_id = tuple(pair)
         a, b = papers[a_id], papers[b_id]
 
+        # Skip pairs where both have S2 IDs but they differ
+        if is_s2_mismatch(a, b):
+            continue
+
         score, signals, details = score_paper_pair(a, b)
 
-        if score < args.threshold and not is_auto_match(signals, details):
+        if score < args.threshold and not is_auto_match(signals, details, score):
             continue
 
         pair_data = {
@@ -725,13 +767,23 @@ def main():
         }
         pair_score_map[pair] = pair_data
 
-        if is_auto_match(signals, details):
+        if is_auto_match(signals, details, score):
             auto_match_pairs.append(pair_data)
+        elif is_auto_skip(signals, details, score):
+            auto_skip_pairs.append(pair_data)
         elif score >= args.threshold:
             judgment_pairs.append(pair_data)
 
+    # Record auto-skipped pairs to skip file (for iterative --full scanning)
+    if args.skip_file and auto_skip_pairs:
+        with open(args.skip_file, "a") as f:
+            for pr in auto_skip_pairs:
+                a, b = sorted([pr["a"], pr["b"]])
+                f.write(f"{a}|||{b}\n")
+
     if not args.json:
         print(f"Auto-match pairs: {len(auto_match_pairs)}")
+        print(f"Auto-skip pairs: {len(auto_skip_pairs)}")
         print(f"Judgment pairs (>= {args.threshold}): {len(judgment_pairs)}")
 
     # --- Phase 1: Auto-merge ---
@@ -835,7 +887,12 @@ def main():
                     })
 
         max_score = max((p["score"] for p in pairwise), default=0.0)
-        confidence = "high" if max_score >= 6.0 else "medium"
+        if max_score >= 7.0:
+            confidence = "high"
+        elif max_score >= 4.5:
+            confidence = "medium"
+        else:
+            confidence = "low"
 
         output_groups.append({
             "group_id": 0,
@@ -846,8 +903,9 @@ def main():
             "pairwise_scores": pairwise,
         })
 
-    # Sort: high confidence first, then by max_score descending
-    output_groups.sort(key=lambda g: (g["confidence"] != "high", -g["_max_score"]))
+    # Sort: high confidence first, then medium, then low; within tier by max_score descending
+    _CONF_ORDER = {"high": 0, "medium": 1, "low": 2}
+    output_groups.sort(key=lambda g: (_CONF_ORDER.get(g["confidence"], 9), -g["_max_score"]))
 
     # Limit and set group_id to canonical paper ID
     output_groups = output_groups[:args.limit]
@@ -874,17 +932,21 @@ def main():
     if not args.json:
         high = sum(1 for g in output_groups if g["confidence"] == "high")
         medium = sum(1 for g in output_groups if g["confidence"] == "medium")
+        low = sum(1 for g in output_groups if g["confidence"] == "low")
         print(f"\nFound {len(output_groups)} judgment group(s) (threshold={args.threshold})")
         print(f"  High confidence:   {high}")
         print(f"  Medium confidence: {medium}")
+        print(f"  Low confidence:    {low}")
         if n_auto_merged:
             print(f"  Auto-merged:       {n_auto_merged}")
+        if auto_skip_pairs:
+            print(f"  Auto-skipped:      {len(auto_skip_pairs)}")
         print(f"Output: {OUTPUT_FILE}")
         if output_groups:
             print(f"FILES: {n_files}")
     else:
-        print(json.dumps({"auto_merged": n_auto_merged, "groups_found": len(output_groups),
-                          "files": n_files}, indent=2))
+        print(json.dumps({"auto_merged": n_auto_merged, "auto_skipped": len(auto_skip_pairs),
+                          "groups_found": len(output_groups), "files": n_files}, indent=2))
 
     sys.exit(2 if output_groups else 0)
 

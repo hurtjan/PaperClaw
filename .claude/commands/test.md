@@ -93,7 +93,7 @@ Uses the first discovered test subdir.
 8. **Verify results:**
    - Confirm `data/extractions/<id>.json` exists for each new paper ID
    - Run `.venv/bin/python3 scripts/build/check_db.py` — **FAIL Phase A** if exit code non-zero
-   - Run `.venv/bin/python3 scripts/query/duckdb_query.py rebuild`
+   - Run `.venv/bin/python3 scripts/build/build_duckdb.py`
 
 9. **Run Phase A queries** (record pass/fail per query):
     - `duckdb_query.py stats`
@@ -131,7 +131,7 @@ Uses the second discovered test subdir. **Skip this phase if only one test subdi
 14. **Verify results:**
     - Confirm `data/extractions/<id>.json` exists for each new paper ID
     - Run `.venv/bin/python3 scripts/build/check_db.py` — **FAIL Phase B** if exit code non-zero
-    - Run `.venv/bin/python3 scripts/query/duckdb_query.py rebuild`
+    - Run `.venv/bin/python3 scripts/build/build_duckdb.py`
 
 15. **Run Phase B queries** (record pass/fail per query). Use real paper IDs discovered during extraction:
     - `duckdb_query.py stats` (expect total owned = sum of PDFs from all test dirs so far)
@@ -167,7 +167,7 @@ Uses the second discovered test subdir. **Skip this phase if only one test subdi
     Verify exit code 0 — **FAIL Phase C** if non-zero.
 
     ```bash
-    .venv/bin/python3 scripts/query/duckdb_query.py rebuild
+    .venv/bin/python3 scripts/build/build_duckdb.py
     ```
 
 20. **Run Phase C queries:**

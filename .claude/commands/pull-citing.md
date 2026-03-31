@@ -14,13 +14,12 @@ Arguments: $ARGUMENTS
 
 - Always use `.venv/bin/python3` for scripts.
 - Recommend setting `S2_API_KEY` env var for title search and higher rate limits.
-- Always invoke agents via the Agent tool, never via Bash.
 
 ---
 
 ## Forward Citations
 
-Fetch and integrate papers that cite each owned paper via the S2 API, with agent-reviewed matching.
+Fetch citing papers via S2, create stubs, then deduplicate with /clean-db.
 
 ### Step 1: Fetch S2 data
 
@@ -34,55 +33,17 @@ Fetch and integrate papers that cite each owned paper via the S2 API, with agent
 - Persists resolved S2 IDs on owned papers in `papers.json`
 - Caches results for 30 days (use `--force` to re-fetch)
 
-### Step 2: Score candidates
-
-```
-.venv/bin/python3 scripts/link/link_forward.py
-```
-
-Scores each citing paper against the DB. Classifies as AUTO_MATCHED (score > 6), NEEDS_JUDGMENT (score 1-6), or NEW (no match). Writes `data/tmp/forward_candidates.txt`.
-
-Follow the output directive:
-- `NEXT: forward-citation-linker` → proceed to Step 3
-- `STOP: no candidates to review` → skip directly to Step 4
-
-### Step 3: Agent review (if NEXT from Step 2)
-
-Invoke the `forward-citation-linker` agent. It will:
-1. Read `data/tmp/forward_candidates.txt`
-2. Verify AUTO_MATCHED entries, decide NEEDS_JUDGMENT entries (match or `new`)
-3. Write `data/tmp/forward_resolved.txt`
-4. Run `apply_forward.py` to apply decisions
-
-### Step 4: Auto-apply (if STOP from Step 2)
+### Step 2: Create stubs
 
 ```
 .venv/bin/python3 scripts/link/apply_forward.py
 ```
 
-(All citations were NEW — no agent review needed. Creates stubs automatically.)
+Creates stubs for all citing papers not already in the DB (exact-match by DOI/S2 ID). New stubs are marked `dedup_pending=True`. Wires `forward_cited_by` edges on owned papers.
 
-### Step 5: Author linking
+### Step 3: Deduplicate and link authors
 
-```
-.venv/bin/python3 scripts/link/link_authors.py
-```
-
-Follow the output directive:
-- `NEXT` → invoke the `author-resolver` agent
-- `STOP` → done
-
----
-
-## Legacy mode (skip agent review)
-
-Use `--no-review` to auto-accept all matches without an agent review step:
-
-```
-.venv/bin/python3 scripts/enrich/fetch_forward_citations.py [--paper ID ...| --all] --no-review
-```
-
-Directly integrates citations into `papers.json` without saving raw results or running link/apply scripts. Useful for batch runs where manual review isn't needed.
+Run `/clean-db` to find and merge duplicate stubs, then link authors.
 
 ---
 

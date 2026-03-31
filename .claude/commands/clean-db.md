@@ -27,6 +27,18 @@ Parse `$ARGUMENTS` for optional values:
 
 ---
 
+## Step 0a: Clear stale decision files
+
+Before anything else, remove leftover decision files from previous runs so agents start with a clean slate:
+
+```bash
+rm -f data/tmp/duplicate_candidates*.txt data/tmp/duplicate_resolved*.txt data/tmp/author_candidates*.txt data/tmp/author_resolved*.txt
+```
+
+This prevents agents from inheriting old skip/merge decisions and attempting deep-review reads on papers that have no local content.
+
+---
+
 ## Step 0: Repair stale alias references
 
 Before detecting duplicates, resolve any stale alias references left by previous merges or imports:
@@ -50,7 +62,7 @@ If it reports "No aliases to resolve", the DB is clean — continue to Step 1. O
 ```
 
 Check the exit code and output:
-- **Exit code 0** (no groups found): Report auto-merge results (if any) and "No judgment groups remaining." Suggest `--threshold 2.0` for a broader search. **Skip to Step 3.**
+- **Exit code 0** (no groups found): Report auto-merge results (if any) and "No judgment groups remaining." Suggest `--threshold 2.5` for a broader search. **Skip to Step 3.**
 - **Exit code 2** (groups found): Parse the stdout for a `FILES: N` line. This tells you how many TXT files were generated. Continue to Step 2.
 
 ### `--full` mode — iterative batched scan
@@ -189,7 +201,7 @@ After **all** agents complete:
 ## Step 4: Final rebuild + report
 
 ```bash
-.venv/bin/python3 scripts/query/duckdb_query.py rebuild
+.venv/bin/python3 scripts/build/build_duckdb.py
 ```
 
 Report the outcome to the user:
