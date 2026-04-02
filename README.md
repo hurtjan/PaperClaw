@@ -9,21 +9,28 @@ You start reading one paper. It cites five interesting ones. Each of those cites
 
 **PaperClaw** ingests your PDFs and uses AI agents to extract structured metadata, citations, and context — then fuzzy-matches everything across papers to build a unified citation graph, which you can then query using Claude Code. Think of it as a personal literature database that actually understands how your papers relate to each other. It runs inside Claude Code — no additional subscriptions are needed beyond Claude Code itself.
 
-## How it works 
-After cloning the repository, you start Claude Code and run `/onboarding` to set up your environment.
+## Getting started
+
 ```bash
 git clone <repo-url> PaperClaw
 cd PaperClaw
 claude
 ```
 
-Drop your PDFs in, run `/ingest`, and PaperClaw extracts structured data from each one of them.
-After that, you can query your library.
-To save on Claude Code usage, you can even import other people's libraries and merge them with your own.
+On first launch, `/onboarding` runs automatically to set up your environment. After that, drop your PDFs into `pdf-staging/` and run `/ingest`.
 
-**Token usage:** I tried to build PaperClaw as efficient as possible, for the extraction it mostly relies on the cheapest Haiku agents, only falling back to the more expensive Sonnet agents if necessary. However, the ingestion is still the most expensive part of the process. A typical Nature paper will cost around 5-15% of your session budget on the $20/Month Pro plan.
+## Project structure
 
-You can then query your library by calling `/query <your question>`.
+PaperClaw is split into two Claude Code environments — one for building the database, one for querying it.
+
+| Environment | How to open | Purpose |
+|---|---|---|
+| **Main** (`PaperClaw/`) | `cd PaperClaw && claude` | Ingest PDFs, manage the database, merge corpora, fetch citations |
+| **Query** (`PaperClaw/query/`) | `cd PaperClaw/query && claude` | Ask questions about your literature — read-only, cheap (Haiku-powered) |
+
+The separation keeps query sessions fast and inexpensive. The query environment is sandboxed and read-only — it can't modify your database, and a guard hook blocks direct file reads so all data flows through optimized query scripts.
+
+**Token usage:** Extraction mostly relies on cheap Haiku agents, only falling back to Sonnet when necessary. A typical Nature paper costs around 5-15% of your session budget on the $20/month Pro plan. Querying in the `query/` subdirectory is significantly cheaper since it uses a Haiku-based agent.
 
 **Cross-corpus analysis**
 - "Which papers discuss [topic], and what methodologies do they use?"
@@ -123,24 +130,25 @@ A sparse adjacency matrix (scipy CSR format) built from the citation links in `p
 
 ## Querying
 
-PaperClaw includes a dedicated query environment in the `query/` subdirectory. It's a standalone Claude Code project — sandboxed, read-only, with a guard hook that blocks direct file reads and a Haiku-based agent that keeps token costs low.
+Open the query environment and ask questions in natural language:
 
 ```bash
 cd query && claude
 ```
 
-Then ask questions in natural language. The query environment has access to:
+The query environment is a standalone Claude Code project — sandboxed, read-only, powered by a Haiku agent to keep costs low. It has access to:
 
 - **Full-text search** — BM25-ranked search across titles, abstracts, claims, section summaries, and more
-- **Citation chains** — trace references forward or backward with configurable depth (uses recursive SQL)
-- **Purpose filtering** — find all papers cited as methodology, or as contrasting evidence, etc.
+- **Citation chains** — trace references forward or backward with configurable depth (recursive SQL)
+- **Purpose filtering** — find all papers cited as methodology, contrasting evidence, etc.
 - **Author lookup** — search by author, list coauthors, find an author's full publication list
-- **Network analysis** — PageRank and Katz centrality to find structurally central papers; personalized PageRank seeded from specific papers; reverse mode to find surveys
+- **Network analysis** — PageRank and Katz centrality for structurally central papers; personalized PageRank; reverse mode to find surveys
+- **Co-citation & bibliographic coupling** — find papers that appear together in bibliographies or share references
 - **Raw SQL** — escape hatch for arbitrary DuckDB queries when built-in commands aren't enough
 
-The query database is synced automatically after `/ingest`, `/clean-db`, and `/merge`. To sync manually: `python3 query/sync.py`.
+The query database syncs automatically after `/ingest`, `/clean-db`, and `/merge`. To sync manually: `python3 query/sync.py` from the project root.
 
-> **Note:** `/query` still works in the main project context, but the `query/` subdirectory is the preferred way to query — it's cheaper, faster, and won't pollute your ingestion context.
+To return to the main environment for ingestion or database management: `cd .. && claude`.
 
 
 ## Merging databases
@@ -175,11 +183,17 @@ If you later obtain the PDF for an `external_owned` paper, `/ingest` detects the
 
 ## Commands
 
+All commands run in the **main** environment (`PaperClaw/`).
+
 | Command | Purpose |
 |---------|---------|
 | `/ingest` | Full pipeline: PDF intake → extraction → linking → DB rebuild |
-| `/merge` | Import an external PaperClaw database into the local DB |
+| `/merge <source>` | Import an external PaperClaw database into the local DB |
+| `/export` | Bundle the local DB into a shareable `.paperclaw` file |
 | `/pull-citing` | Fetch forward citations and backfill S2 IDs from Semantic Scholar |
+| `/fetch-preprints` | Download PDFs from arXiv, bioRxiv, medRxiv, SSRN |
+| `/clean-db` | Find and merge duplicate papers, then link authors |
+| `/test` | End-to-end pipeline test using fixture PDFs |
 
 ## Customization
 
