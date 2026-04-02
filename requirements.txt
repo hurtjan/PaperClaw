@@ -1,5 +1,6 @@
 rapidfuzz
 pymupdf
+docling
 duckdb
 pyyaml
 jsonpatch

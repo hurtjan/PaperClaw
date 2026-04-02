@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Ingest new PDFs: extract text, check for duplicates, move to storage.
+Ingest new PDFs: extract text with docling, check for duplicates, move to storage.
 
 Workflow:
   1. Scan pdf-staging/ for new PDFs
-  2. Extract text from each PDF using PyMuPDF
+  2. Extract markdown text from each PDF using docling (one at a time, with progress)
   3. Parse title + authors from extracted text (heuristic)
   4. Fuzzy-match against existing data/db/papers.json to detect duplicates
-  5. If NOT duplicate: move PDF to data/pdfs/, keep text in data/text/
+  5. If NOT duplicate: move PDF to data/pdfs/, save text to data/text/
   6. If duplicate: report and leave in pdf-staging/ for user decision
 
 Usage:
@@ -20,9 +20,8 @@ import argparse
 import json
 import shutil
 import sys
+import time
 from pathlib import Path
-
-import fitz  # PyMuPDF
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -37,15 +36,44 @@ TEXT_DIR = ROOT / "data" / "text"
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 
 
-def extract_text(pdf_path: Path) -> str:
-    """Extract text from PDF with PAGE markers."""
-    doc = fitz.open(str(pdf_path))
-    parts = []
-    for i, page in enumerate(doc, 1):
-        parts.append(f"\n{'=' * 80}\nPAGE {i}\n{'=' * 80}\n")
-        parts.append(page.get_text())
-    doc.close()
-    return "".join(parts)
+def log(msg=""):
+    """Print with immediate flush so progress is visible even when piped."""
+    print(msg, flush=True)
+
+
+def create_converter():
+    """Create a docling DocumentConverter (expensive — call once)."""
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorOptions
+    from docling.datamodel.accelerator_options import AcceleratorDevice
+    from docling.datamodel.base_models import InputFormat
+
+    pipeline_opts = PdfPipelineOptions()
+    pipeline_opts.do_ocr = False
+    pipeline_opts.do_table_structure = True
+    pipeline_opts.do_formula_enrichment = False
+    try:
+        pipeline_opts.accelerator_options = AcceleratorOptions(device=AcceleratorDevice.MPS)
+    except Exception:
+        pipeline_opts.accelerator_options = AcceleratorOptions(device=AcceleratorDevice.CPU)
+
+    return DocumentConverter(
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_opts)}
+    )
+
+
+def extract_text(pdf_path: Path, converter) -> tuple[str, int]:
+    """Extract markdown text from PDF using docling. Returns (text, page_count)."""
+    t0 = time.time()
+    result = converter.convert(str(pdf_path.resolve()))
+    elapsed = time.time() - t0
+
+    doc = result.document
+    page_count = len(list(doc.pages))
+    content_md = doc.export_to_markdown()
+
+    log(f"    {page_count} pages, {len(content_md)} chars in {elapsed:.1f}s ({elapsed/max(page_count,1):.1f}s/page)")
+    return content_md, page_count
 
 
 def heuristic_metadata(text: str) -> dict:
@@ -54,7 +82,6 @@ def heuristic_metadata(text: str) -> dict:
     header = text[:3000]
     lines = [l.strip() for l in header.split("\n") if l.strip()]
 
-    # Skip PAGE markers, short lines, and known non-title patterns to find title
     import re
     SKIP_PATTERNS = [
         re.compile(r"^arXiv:", re.IGNORECASE),
@@ -62,22 +89,31 @@ def heuristic_metadata(text: str) -> dict:
         re.compile(r"^(doi|http|https|www\.)", re.IGNORECASE),
         re.compile(r"^(received|accepted|published|submitted)", re.IGNORECASE),
         re.compile(r"^\d+$"),                      # page numbers
-        re.compile(r".*:\s*$"),                               # lines ending with colon (author attributions)
+        re.compile(r".*:\s*$"),                     # lines ending with colon
         re.compile(r"^[A-Z][\w.]+\s+and\s+[A-Z]", re.IGNORECASE),  # "Author and Author"
+        re.compile(r"^<!--.*-->$"),                 # HTML comments (docling images)
+        re.compile(r"^Contents\s+lists", re.IGNORECASE),  # journal boilerplate
+        re.compile(r"^j\s*o\s*u\s*r\s*n\s*a\s*l", re.IGNORECASE),  # spaced journal text
+        re.compile(r"^\[.*\]\(.*\)$"),              # markdown links (journal URLs)
+        re.compile(r"^(Journal|Review|Proceedings)\s+of\b", re.IGNORECASE),  # journal names
     ]
     title = ""
     authors_hint = []
     for line in lines:
+        # Strip markdown heading markers
+        clean = re.sub(r"^#{1,6}\s+", "", line)
+        if not clean:
+            continue
         if line.startswith("=") or line.startswith("PAGE"):
             continue
-        if any(p.match(line) for p in SKIP_PATTERNS):
+        if any(p.match(clean) for p in SKIP_PATTERNS):
             continue
-        if len(line) > 15 and not title:
-            title = line
+        if len(clean) > 15 and not title:
+            title = clean
             continue
         # Lines with commas after title might be authors
-        if title and "," in line and len(line) < 200:
-            authors_hint.append(line)
+        if title and "," in clean and len(clean) < 200:
+            authors_hint.append(clean)
             if len(authors_hint) >= 3:
                 break
 
@@ -126,6 +162,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ingest PDFs from staging")
     parser.add_argument("--dry-run", action="store_true", help="Show what would happen")
     parser.add_argument("--force", action="store_true", help="Skip duplicate check")
+    parser.add_argument("--max-size-mb", type=int, default=50, help="Skip PDFs larger than this (MB)")
     args = parser.parse_args()
 
     STAGING_DIR.mkdir(parents=True, exist_ok=True)
@@ -134,41 +171,60 @@ def main():
 
     staged = sorted(STAGING_DIR.glob("*.pdf"))
     if not staged:
-        print("No PDFs in pdf-staging/.")
+        log("No PDFs in pdf-staging/.")
         return
+
+    total = len(staged)
+    log(f"Found {total} PDFs in pdf-staging/")
+
+    # Initialize docling converter once (expensive)
+    log("Initializing docling converter...")
+    t_init = time.time()
+    converter = create_converter()
+    log(f"Converter ready ({time.time() - t_init:.1f}s)")
 
     # Load existing DB for duplicate check
     papers = {}
     if PAPERS_FILE.exists() and not args.force:
         with open(PAPERS_FILE) as f:
             papers = json.load(f).get("papers", {})
-        print(f"Loaded {len(papers)} existing papers for duplicate check")
+        log(f"Loaded {len(papers)} existing papers for duplicate check")
 
     accepted = []
     duplicates = []
     errors = []
+    t_start = time.time()
 
-    for pdf_path in staged:
-        print(f"\nProcessing: {pdf_path.name}")
+    for idx, pdf_path in enumerate(staged, 1):
+        log(f"\n[{idx}/{total}] {pdf_path.name}")
+
+        # Skip if PDF was removed between glob and processing
+        if not pdf_path.exists():
+            log(f"  -> skip (file missing)")
+            continue
 
         # Check if text already exists
         text_path = TEXT_DIR / f"{pdf_path.stem}.txt"
         if text_path.exists():
             storage_path = STORAGE_DIR / pdf_path.name
             if storage_path.exists():
-                print(f"  Already processed (text + storage exist)")
+                log(f"  -> skip (already processed)")
                 continue
+
+        # Skip oversized PDFs
+        size_mb = pdf_path.stat().st_size / (1024 * 1024)
+        if size_mb > args.max_size_mb:
+            log(f"  -> skip (too large: {size_mb:.0f}MB > {args.max_size_mb}MB limit)")
+            errors.append((pdf_path.name, f"too large: {size_mb:.0f}MB"))
+            continue
 
         # Extract text
         try:
-            text = extract_text(pdf_path)
+            text, page_count = extract_text(pdf_path, converter)
         except Exception as e:
-            print(f"  ERROR extracting text: {e}")
+            log(f"  ERROR: {e}")
             errors.append((pdf_path.name, str(e)))
             continue
-
-        page_count = text.count("PAGE ")
-        print(f"  Extracted {page_count} pages")
 
         # Duplicate check
         external_match = None
@@ -177,59 +233,42 @@ def main():
             match = check_duplicate(metadata, papers)
             if match:
                 if match["match_type"] == "external":
-                    new_title = metadata.get("title", pdf_path.stem)
-                    print(f"  EXTERNAL MATCH: {match['title'][:80]}")
-                    print(f"    Source DB: {match.get('source_db', '?')}")
-                    print(f"    Paper ID:  {match['id']}")
-                    print(f"  → PDF accepted for adoption. After ingest completes, run:")
-                    print(f"      .venv/bin/python3 scripts/ingest/adopt_import.py {match['id']}")
+                    log(f"  EXTERNAL MATCH: {match['title'][:80]}")
+                    log(f"    Source DB: {match.get('source_db', '?')}  |  Paper ID: {match['id']}")
                     external_match = match
-                    # Fall through to normal accept flow
                 elif match["match_type"] == "stub":
-                    new_title = metadata.get("title", pdf_path.stem)
-                    print(f"  STUB MATCH: {match['title'][:80]}")
-                    print(f"    Paper ID:  {match['id']}")
-                    print(f"  → PDF accepted for stub promotion. After ingest completes, run:")
-                    print(f"      .venv/bin/python3 scripts/ingest/adopt_import.py {match['id']}")
+                    log(f"  STUB MATCH: {match['title'][:80]}")
+                    log(f"    Paper ID: {match['id']}")
                     external_match = match
-                    # Fall through to normal accept flow
                 else:
-                    new_title = metadata.get("title", pdf_path.stem)
-                    print(f"  DUPLICATE FOUND")
-                    print(f"    New PDF:  {new_title[:80]}")
-                    print(f"    In DB:    {match['title'][:80]} ({match['id']})")
-                    print(f"  → PDF left in staging. Remove it manually if confirmed duplicate.")
+                    log(f"  DUPLICATE: {match['title'][:80]} ({match['id']})")
                     em = match.get("extraction_meta")
                     if not em or set(em.get("passes_completed", [])) < {1, 2, 3, 4}:
                         completed = em.get("passes_completed", []) if em else []
-                        print(f"    ⚠ Existing entry has incomplete extractions (passes: {completed or 'none'})")
-                        print(f"    → If this is the same paper, consider running missing passes on the existing entry")
+                        log(f"    incomplete extractions (passes: {completed or 'none'})")
                     duplicates.append((pdf_path.name, match, text[:3000]))
-
-                    # Clean up extracted text if it was written by a previous partial run
                     if text_path.exists():
                         text_path.unlink()
-                        print(f"  → Deleted partial text file: {text_path.name}")
                     continue
 
         if args.dry_run:
-            print(f"  [dry-run] Would accept and move to data/pdfs/")
+            log(f"  -> dry-run, would accept")
             accepted.append((pdf_path.name, external_match["id"] if external_match else None))
             continue
 
-        # Write text — rename to paper_id if adopting
+        # Save text immediately
         if external_match:
             text_path = TEXT_DIR / f"{external_match['id']}.txt"
         text_path.write_text(text, encoding="utf-8")
-        print(f"  Text saved: {text_path}")
+        log(f"  -> saved: {text_path.name}")
 
-        # Move PDF to storage — rename to paper_id if adopting
+        # Move PDF to storage
         if external_match:
             storage_path = STORAGE_DIR / f"{external_match['id']}.pdf"
         else:
             storage_path = STORAGE_DIR / pdf_path.name
         shutil.move(str(pdf_path), str(storage_path))
-        print(f"  PDF moved: {storage_path}")
+        log(f"  -> moved: {storage_path.name}")
 
         if external_match:
             accepted.append((pdf_path.name, external_match["id"]))
@@ -237,19 +276,21 @@ def main():
             accepted.append((pdf_path.name, None))
 
     # Summary
-    print(f"\n{'=' * 60}")
-    print(f"Accepted: {len(accepted)}")
+    elapsed_total = time.time() - t_start
+    log(f"\n{'=' * 60}")
+    log(f"Done in {elapsed_total:.0f}s")
+    log(f"Accepted: {len(accepted)}  |  Duplicates: {len(duplicates)}  |  Errors: {len(errors)}")
     adoptions = []
     for name, adopt_id in accepted:
         if adopt_id:
-            print(f"  {name}  (adopt: {adopt_id})")
+            log(f"  {name}  (adopt: {adopt_id})")
             adoptions.append(adopt_id)
         else:
-            print(f"  {name}")
+            log(f"  {name}")
     if duplicates:
-        print(f"Duplicates (left in staging): {len(duplicates)}")
+        log(f"\nDuplicates (left in staging):")
         for name, match, _ in duplicates:
-            print(f"  {name} → {match['id']} (score {match['score']})")
+            log(f"  {name} -> {match['id']} (score {match['score']})")
         tmp_dir = ROOT / "data" / "tmp"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         pending = [
@@ -263,20 +304,20 @@ def main():
         (tmp_dir / "pending_duplicates.json").write_text(
             json.dumps(pending, indent=2), encoding="utf-8"
         )
-        print(f"  → Wrote data/tmp/pending_duplicates.json ({len(pending)} entries)")
+        log(f"  -> Wrote data/tmp/pending_duplicates.json ({len(pending)} entries)")
     if errors:
-        print(f"Errors: {len(errors)}")
+        log(f"\nErrors:")
         for name, err in errors:
-            print(f"  {name}: {err}")
+            log(f"  {name}: {err}")
 
     if accepted and not args.dry_run:
         regular = [n for n, aid in accepted if not aid]
         if regular:
-            print(f"\nNext: run paper-extractor agent on the new text files")
+            log(f"\nNext: run paper-extractor agent on the new text files")
         if adoptions:
-            print(f"\nAdoption pending — run for each external match:")
+            log(f"\nAdoption pending — run for each external match:")
             for aid in adoptions:
-                print(f"  .venv/bin/python3 scripts/ingest/adopt_import.py {aid}")
+                log(f"  .venv/bin/python3 scripts/ingest/adopt_import.py {aid}")
 
 
 if __name__ == "__main__":

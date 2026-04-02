@@ -26,9 +26,7 @@ All scripts run from project root with `.venv/bin/python3 scripts/query/<script>
 ## Scripts
 
 - **`duckdb_query.py`** — Primary query engine. DuckDB-backed with BM25 full-text search, compound filters, recursive citation chains, and in-database PageRank/Katz. Auto-builds `data/db/lit.duckdb` on first run; use `rebuild` after ingesting new papers.
-- **`query_db.py`** — Fallback: cross-corpus citation lookups (reads `data/db/contexts.json`)
-- **`cite_explorer.py`** — How one paper cites others (reads `data/extractions/`)
-- **`corpus.py`** — Fallback: extraction metadata + cross-corpus search
+- **`cite_explorer.py`** — How one paper cites others (reads `data/extractions/`). Supports `--detail minimal|summary|normal|full` for varying output levels.
 - **`research.py`** — Saved research findings
 
 ## DuckDB quick reference

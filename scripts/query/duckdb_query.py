@@ -3,9 +3,8 @@
 duckdb_query.py — DuckDB-backed query engine for the literature database.
 
 Loads papers.json, contexts.json, and extraction JSONs into a persistent DuckDB
-database with FTS indexes. Exposes the same queries as query_db.py and corpus.py
-but with compound filters, full-text search with BM25 ranking, and recursive
-citation chain traversal.
+database with FTS indexes. Supports compound filters, full-text search with
+BM25 ranking, and recursive citation chain traversal.
 
 The DuckDB file (data/db/lit.duckdb) must be built before querying:
   .venv/bin/python3 scripts/build/build_duckdb.py [--fts] [--force]
