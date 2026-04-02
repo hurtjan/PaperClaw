@@ -9,13 +9,17 @@ You are helping a user get set up with PaperClaw and oriented on how to use it.
 Check the following, running checks in parallel where possible:
 
 1. **Python venv** — does `.venv/` exist?
-   - If not: run `python3 -m venv .venv` (or `python -m venv .venv` on Windows) then `python3 scripts/pip_install.py install -r requirements.txt`
-   - If it exists but packages may be stale: run `python3 scripts/pip_install.py install -r requirements.txt` (pip will skip already-satisfied deps)
+   - If not: run `python3 -m venv .venv` (or `python -m venv .venv` on Windows) then `python3 scripts/py.py -m pip install -r requirements.txt`
+   - If it exists but packages may be stale: run `python3 scripts/py.py -m pip install -r requirements.txt` (pip will skip already-satisfied deps)
 
-2. **DuckDB FTS extension** — does `.duckdb_extensions/` exist?
+2. **Python UTF-8 mode** — run `python3 scripts/py.py -c "import sys; print(sys.flags.utf8_mode)"`.
+   - If it prints `1`: all good.
+   - If it prints `0`: warn the user that scripts may fail on non-ASCII content (e.g. author names with accents) and suggest setting `PYTHONUTF8=1` in their shell environment as a permanent fix.
+
+3. **DuckDB FTS extension** — does `.duckdb_extensions/` exist?
    - If not: run `python3 scripts/py.py scripts/build/install_fts.py`
 
-3. **Data directories** — do `data/db/`, `data/pdfs/`, `data/text/`, `data/extractions/`, `data/tmp/`, and `pdf-staging/` exist?
+4. **Data directories** — do `data/db/`, `data/pdfs/`, `data/text/`, `data/extractions/`, `data/tmp/`, and `pdf-staging/` exist?
    - Create any that are missing with `mkdir -p`
 
 Report what was found and what (if anything) was fixed.
@@ -46,7 +50,41 @@ Run this with `python3 scripts/py.py -c "..."` (inline the snippet).
 - Offer to update their profile if they'd like, but do not re-ask for their details unprompted.
 - Continue to Step 3.
 
-## Step 3 — Extraction defaults
+## Step 3 — PDF backend
+
+Check whether docling is installed:
+
+```bash
+python3 scripts/py.py -c "import docling; print('installed')" 2>/dev/null || echo "not installed"
+```
+
+**If not installed**, ask:
+
+> **PDF extraction backend:** PaperClaw supports two PDF extraction backends:
+>
+> | Backend | Quality | Install size |
+> |---|---|---|
+> | **PyMuPDF** (default) | Basic text extraction — works well for most papers | Already installed (~30 MB) |
+> | **Docling** (optional) | Layout-aware markdown with table structure detection | Large install (~2 GB, includes PyTorch) |
+>
+> Would you like to install docling for higher-quality extraction? You can always install it later with:
+> `python3 scripts/py.py -m pip install -r requirements-docling.txt`
+
+If the user wants docling: run `python3 scripts/py.py -m pip install -r requirements-docling.txt`.
+
+Save the choice to `project.yaml` under `pdf_backend: docling` or `pdf_backend: pymupdf`:
+
+```python
+import yaml, pathlib
+p = pathlib.Path("project.yaml")
+data = yaml.safe_load(p.read_text()) if p.exists() else {}
+data["pdf_backend"] = "CHOICE"
+p.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
+```
+
+**If already installed**, skip this step.
+
+## Step 4 — Extraction defaults
 
 Check whether `ingest_defaults.md` exists in the memory directory.
 
@@ -82,7 +120,7 @@ Default extraction passes: [1, 2, 3, 4]
 
 Also add a pointer to `MEMORY.md` in the memory directory if one is not already present.
 
-## Step 4 — Skills overview
+## Step 5 — Skills overview
 
 Present the available skills grouped by workflow phase. Use a clean table or grouped list:
 
@@ -101,7 +139,7 @@ Present the available skills grouped by workflow phase. Use a clean table or gro
 - `/onboarding` — Re-run setup, update your profile, or re-read this orientation.
 - `/test` — Run the end-to-end pipeline test to verify everything works.
 
-## Step 5 — Usage guide + Semantic Scholar explainer
+## Step 6 — Usage guide + Semantic Scholar explainer
 
 Show the core workflow as a numbered list:
 
@@ -122,7 +160,7 @@ Then explain Semantic Scholar integration:
 >
 > Both work without authentication, but setting the `S2_API_KEY` environment variable gives you higher rate limits for large corpora.
 
-## Step 6 — Project state
+## Step 7 — Project state
 
 Assess the current state of the database:
 
@@ -133,7 +171,7 @@ Give the user a brief, plain-English status:
 - How many papers are in the database (if any), broken down by type (owned / external / stubs)
 - Whether there are PDFs waiting in staging
 
-## Step 7 — What to do next + example queries
+## Step 8 — What to do next + example queries
 
 Based on the project state, suggest the most useful next step:
 

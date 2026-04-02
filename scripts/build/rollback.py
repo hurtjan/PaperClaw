@@ -97,7 +97,7 @@ def do_rollback(entries: list[dict], n: int, dry_run: bool) -> None:
     try:
         import jsonpatch
     except ImportError:
-        print("ERROR: jsonpatch not installed. Run: python3 scripts/pip_install.py install jsonpatch",
+        print("ERROR: jsonpatch not installed. Run: python3 scripts/py.py -m pip install jsonpatch",
               file=sys.stderr)
         sys.exit(1)
 

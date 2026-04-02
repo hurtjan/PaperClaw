@@ -26,7 +26,7 @@ from pathlib import Path
 try:
     import duckdb
 except ImportError:
-    print("ERROR: duckdb not installed. Run: python3 scripts/pip_install.py install duckdb", file=sys.stderr)
+    print("ERROR: duckdb not installed. Run: python3 scripts/py.py -m pip install duckdb", file=sys.stderr)
     sys.exit(1)
 
 ROOT = Path(__file__).resolve().parent.parent.parent

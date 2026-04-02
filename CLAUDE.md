@@ -26,7 +26,7 @@ Always show full paper title at least once. Use (Author, Year) for short mention
 
 ### Python environment
 
-Always use `python3 scripts/py.py` for scripts (cross-platform venv forwarder). Install with `python3 scripts/pip_install.py install <pkg>` and add to `requirements.txt`. On Windows, use `python` instead of `python3`. Core libraries: `scripts/lib/litdb.py` (shared utilities, JSON I/O, normalization) and `scripts/lib/db.py` (DuckDB acceleration layer).
+Always use `python3 scripts/py.py` for scripts (cross-platform venv forwarder). Install with `python3 scripts/py.py -m pip install <pkg>` and add to `requirements.txt`. On Windows, use `python` instead of `python3`. Core libraries: `scripts/lib/litdb.py` (shared utilities, JSON I/O, normalization) and `scripts/lib/db.py` (DuckDB acceleration layer).
 
 ### JSON serialization
 

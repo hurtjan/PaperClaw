@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-Ingest new PDFs: extract text with docling, check for duplicates, move to storage.
+Ingest new PDFs: extract text, check for duplicates, move to storage.
+
+Uses docling for high-quality layout-aware extraction when available,
+falls back to PyMuPDF for basic text extraction.
 
 Workflow:
   1. Scan pdf-staging/ for new PDFs
-  2. Extract markdown text from each PDF using docling (one at a time, with progress)
+  2. Extract text from each PDF (docling → pymupdf fallback)
   3. Parse title + authors from extracted text (heuristic)
   4. Fuzzy-match against existing data/db/papers.json to detect duplicates
   5. If NOT duplicate: move PDF to data/pdfs/, save text to data/text/
@@ -30,6 +33,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "build"))
 from litdb import normalize_doi
 from find_matches import score_paper_pair
 
+HAS_DOCLING = False
+try:
+    import docling  # noqa: F401
+    HAS_DOCLING = True
+except ImportError:
+    pass
+
 STAGING_DIR = ROOT / "pdf-staging"
 STORAGE_DIR = ROOT / "data" / "pdfs"
 TEXT_DIR = ROOT / "data" / "text"
@@ -41,7 +51,7 @@ def log(msg=""):
     print(msg, flush=True)
 
 
-def create_converter():
+def create_docling_converter():
     """Create a docling DocumentConverter (expensive — call once)."""
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorOptions
@@ -62,7 +72,7 @@ def create_converter():
     )
 
 
-def extract_text(pdf_path: Path, converter) -> tuple[str, int]:
+def extract_text_docling(pdf_path: Path, converter) -> tuple[str, int]:
     """Extract markdown text from PDF using docling. Returns (text, page_count)."""
     t0 = time.time()
     result = converter.convert(str(pdf_path.resolve()))
@@ -72,8 +82,25 @@ def extract_text(pdf_path: Path, converter) -> tuple[str, int]:
     page_count = len(list(doc.pages))
     content_md = doc.export_to_markdown()
 
-    log(f"    {page_count} pages, {len(content_md)} chars in {elapsed:.1f}s ({elapsed/max(page_count,1):.1f}s/page)")
+    log(f"    [docling] {page_count} pages, {len(content_md)} chars in {elapsed:.1f}s ({elapsed/max(page_count,1):.1f}s/page)")
     return content_md, page_count
+
+
+def extract_text_pymupdf(pdf_path: Path) -> tuple[str, int]:
+    """Extract plain text from PDF using PyMuPDF. Returns (text, page_count)."""
+    import fitz
+    t0 = time.time()
+    doc = fitz.open(str(pdf_path))
+    parts = []
+    page_count = len(doc)
+    for i, page in enumerate(doc, 1):
+        parts.append(f"\n{'=' * 80}\nPAGE {i}\n{'=' * 80}\n")
+        parts.append(page.get_text())
+    doc.close()
+    elapsed = time.time() - t0
+    text = "".join(parts)
+    log(f"    [pymupdf] {page_count} pages, {len(text)} chars in {elapsed:.1f}s")
+    return text, page_count
 
 
 def heuristic_metadata(text: str) -> dict:
@@ -177,11 +204,15 @@ def main():
     total = len(staged)
     log(f"Found {total} PDFs in pdf-staging/")
 
-    # Initialize docling converter once (expensive)
-    log("Initializing docling converter...")
-    t_init = time.time()
-    converter = create_converter()
-    log(f"Converter ready ({time.time() - t_init:.1f}s)")
+    # Initialize PDF backend
+    converter = None
+    if HAS_DOCLING:
+        log("Initializing docling converter...")
+        t_init = time.time()
+        converter = create_docling_converter()
+        log(f"Converter ready ({time.time() - t_init:.1f}s)")
+    else:
+        log("Using PyMuPDF backend (install docling for better extraction: python3 scripts/py.py -m pip install -r requirements-docling.txt)")
 
     # Load existing DB for duplicate check
     papers = {}
@@ -220,7 +251,10 @@ def main():
 
         # Extract text
         try:
-            text, page_count = extract_text(pdf_path, converter)
+            if converter:
+                text, page_count = extract_text_docling(pdf_path, converter)
+            else:
+                text, page_count = extract_text_pymupdf(pdf_path)
         except Exception as e:
             log(f"  ERROR: {e}")
             errors.append((pdf_path.name, str(e)))

@@ -4,6 +4,7 @@
 Usage: python3 scripts/py.py scripts/build/check_db.py --flag
 Resolves .venv/bin/python3 (Unix) or .venv/Scripts/python.exe (Windows).
 """
+import os
 import sys
 import platform
 import subprocess
@@ -23,4 +24,5 @@ if not venv_python.exists():
     )
     sys.exit(1)
 
-sys.exit(subprocess.call([str(venv_python)] + sys.argv[1:]))
+env = {**os.environ, "PYTHONUTF8": "1"}
+sys.exit(subprocess.call([str(venv_python)] + sys.argv[1:], env=env))

@@ -30,6 +30,14 @@ PaperClaw is split into two Claude Code environments — one for building the da
 
 The separation keeps query sessions fast and inexpensive. The query environment is sandboxed and read-only — it can't modify your database, and a guard hook blocks direct file reads so all data flows through optimized query scripts.
 
+**PDF backend:** By default, PaperClaw uses PyMuPDF for lightweight text extraction (~30 MB). For higher-quality layout-aware extraction with table detection, install the optional docling backend (~2 GB, includes PyTorch):
+
+```bash
+python3 scripts/py.py -m pip install -r requirements-docling.txt
+```
+
+The onboarding wizard asks about this on first run. The ingest pipeline uses docling when available and falls back to PyMuPDF automatically.
+
 **Token usage:** Extraction mostly relies on cheap Haiku agents, only falling back to Sonnet when necessary. A typical Nature paper costs around 5-15% of your session budget on the $20/month Pro plan. Querying in the `query/` subdirectory is significantly cheaper since it uses a Haiku-based agent.
 
 **Cross-corpus analysis**
@@ -61,7 +69,7 @@ The separation keeps query sessions fast and inexpensive. The query environment 
 
 Each PDF in `pdf-staging/` is processed by `ingest.py`:
 
-- **Text extraction** via PyMuPDF — produces plain text with page markers
+- **Text extraction** via docling (layout-aware markdown) or PyMuPDF fallback (plain text with page markers)
 - **Duplicate detection** — fuzzy-matches the title/authors against existing database entries using multi-signal scoring (DOI, author+year, title similarity)
 - Clean papers are moved to `data/pdfs/` with their text saved to `data/text/`
 
