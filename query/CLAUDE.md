@@ -9,7 +9,7 @@ Read-only query environment for the literature database. The user asks questions
 - Always use **(Author, Year)** format in user-facing output. Never expose internal paper IDs.
 - **Synonym expansion:** If a search returns <3 results, try synonyms or broader terms before concluding the topic is absent.
 - **Always delegate to the `query-executor` agent** — query output is large and noisy. Let the agent summarize and filter. Launch multiple agents in parallel for independent queries.
-- Run `python3 sync.py` to refresh the database after upstream changes.
+- Run `python3 ../scripts/py.py ../scripts/build/sync_query.py` to refresh the database after upstream changes.
 
 ## Extraction levels
 

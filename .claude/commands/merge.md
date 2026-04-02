@@ -59,9 +59,9 @@ If exit code is non-zero, report the errors to the user. If exit code is 0, repo
 
 ---
 
-## Step 3 — Deduplication & author linking
+## Step 3 — Deduplication, author linking & sync
 
-Run `/clean-db` to resolve any duplicates introduced by the merge and link authors for newly-added papers.
+Invoke the `/clean-db` skill now. This resolves duplicates introduced by the merge, links authors for newly-added papers, rebuilds the DuckDB, and syncs the query environment.
 
 ---
 

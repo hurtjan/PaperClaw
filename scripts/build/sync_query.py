@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Sync the query subproject from the parent PaperClaw database.
+"""Sync the query subproject from the main PaperClaw database.
 
 Copies lit.duckdb and research findings so the query environment stays current.
-Run this after /ingest, /clean-db, or any DB rebuild in the parent project.
+Called automatically by /clean-db (and transitively by /ingest and /merge).
 
 Usage:
-    python3 sync.py
+    python3 scripts/py.py scripts/build/sync_query.py
 """
 import shutil
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-PARENT = HERE.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
+QUERY = ROOT / "query"
 
-SRC_DB = PARENT / "data" / "db" / "lit.duckdb"
-DST_DB = HERE / "data" / "db" / "lit.duckdb"
+SRC_DB = ROOT / "data" / "db" / "lit.duckdb"
+DST_DB = QUERY / "data" / "db" / "lit.duckdb"
 
-SRC_RESEARCH = PARENT / "research"
-DST_RESEARCH = HERE / "research"
+SRC_RESEARCH = ROOT / "research"
+DST_RESEARCH = QUERY / "research"
 
 
 def sync_file(src, dst):
@@ -53,7 +53,7 @@ def sync_dir(src, dst):
 
 def ensure_git_marker():
     """Create a .git file so Claude Code treats query/ as its own project root."""
-    git_path = HERE / ".git"
+    git_path = QUERY / ".git"
     if git_path.exists():
         if git_path.is_dir():
             shutil.rmtree(git_path)
@@ -64,13 +64,17 @@ def ensure_git_marker():
 
 
 def main():
-    print("Syncing query environment from parent project...\n")
+    if not QUERY.is_dir():
+        print("query/ subdirectory not found, skipping sync.")
+        return
+
+    print("Syncing query environment from main database...\n")
 
     ensure_git_marker()
     ok = sync_file(SRC_DB, DST_DB)
     if not ok:
-        print("\nERROR: Parent database not found. Build it first:")
-        print("  cd .. && python3 scripts/py.py scripts/build/build_duckdb.py --fts")
+        print("\nERROR: Database not found. Build it first:")
+        print("  python3 scripts/py.py scripts/build/build_duckdb.py --fts")
         sys.exit(1)
 
     sync_dir(SRC_RESEARCH, DST_RESEARCH)

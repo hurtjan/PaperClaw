@@ -146,7 +146,7 @@ The query environment is a standalone Claude Code project — sandboxed, read-on
 - **Co-citation & bibliographic coupling** — find papers that appear together in bibliographies or share references
 - **Raw SQL** — escape hatch for arbitrary DuckDB queries when built-in commands aren't enough
 
-The query database syncs automatically after `/ingest`, `/clean-db`, and `/merge`. To sync manually: `python3 query/sync.py` from the project root.
+The query database syncs automatically after `/ingest`, `/clean-db`, and `/merge`.
 
 To return to the main environment for ingestion or database management: `cd .. && claude`.
 

@@ -73,7 +73,7 @@ The `query/` subdirectory is a standalone Claude Code project for querying the l
 
 **Launch:** `cd query && claude`, then ask questions in natural language.
 
-**Sync:** The query database is refreshed automatically after `/ingest`, `/clean-db`, and `/merge`. To sync manually: `python3 query/sync.py` from the project root.
+**Sync:** The query database is refreshed automatically after `/ingest`, `/clean-db`, and `/merge`. To sync manually: `python3 scripts/py.py scripts/build/sync_query.py`.
 
 **If the user asks a paper or literature question in the main context, tell them to open the query environment instead:** _"For querying, open a Claude Code session in the `query/` subdirectory: `cd query && claude`."_
 

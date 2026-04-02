@@ -207,7 +207,7 @@ python3 scripts/py.py scripts/build/build_duckdb.py
 If the `query/` subdirectory exists, sync the fresh database to the query subproject:
 
 ```bash
-python3 query/sync.py
+python3 scripts/py.py scripts/build/sync_query.py
 ```
 
 Report the outcome to the user:
