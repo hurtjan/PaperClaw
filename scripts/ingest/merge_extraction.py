@@ -9,7 +9,7 @@ Writes: data/extractions/{id}.json (merged, overwrites Pass 1)
 Also derives normalized fields: title_normalized, author_lastnames.
 Deletes intermediate files after successful merge.
 
-Usage: .venv/bin/python3 scripts/ingest/merge_extraction.py <paper_id>
+Usage: python3 scripts/py.py scripts/ingest/merge_extraction.py <paper_id>
 """
 
 import json
@@ -256,6 +256,6 @@ def merge(paper_id: str):
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
-        print(f'Usage: .venv/bin/python3 scripts/ingest/merge_extraction.py <paper_id>', file=sys.stderr)
+        print(f'Usage: python3 scripts/py.py scripts/ingest/merge_extraction.py <paper_id>', file=sys.stderr)
         sys.exit(1)
     merge(sys.argv[1])

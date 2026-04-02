@@ -7,9 +7,9 @@ and merges new author entries into the existing authors.json.
 Use --force for a full rebuild.
 
 Usage:
-  .venv/bin/python3 scripts/build/build_authors.py
-  .venv/bin/python3 scripts/build/build_authors.py --force
-  .venv/bin/python3 scripts/build/build_authors.py --stats
+  python3 scripts/py.py scripts/build/build_authors.py
+  python3 scripts/py.py scripts/build/build_authors.py --force
+  python3 scripts/py.py scripts/build/build_authors.py --stats
 """
 
 import json

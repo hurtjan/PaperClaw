@@ -3,7 +3,7 @@
 Unit tests for merge_duplicates.py internals.
 Uses in-memory paper dicts. Exits 0 on pass, 1 on failure.
 
-Usage: .venv/bin/python3 scripts/build/test_merge_duplicates.py
+Usage: python3 scripts/py.py scripts/build/test_merge_duplicates.py
 """
 
 import copy

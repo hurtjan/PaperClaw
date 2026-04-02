@@ -3,7 +3,7 @@
 Merge duplicate paper groups into their canonical entries.
 
 Usage:
-  .venv/bin/python3 scripts/build/merge_duplicates.py [--plan FILE] [--dry-run]
+  python3 scripts/py.py scripts/build/merge_duplicates.py [--plan FILE] [--dry-run]
   --plan      Path to merge plan (default: data/tmp/duplicate_merge_plan.json)
   --dry-run   Preview changes without writing
 

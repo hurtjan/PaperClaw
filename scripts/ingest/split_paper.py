@@ -7,7 +7,7 @@ Supports two formats:
   - Markdown format (from docling): splits by character count at natural boundaries
 
 Usage:
-  .venv/bin/python3 scripts/ingest/split_paper.py <text_file> [--max-pages N] [--max-chars N]
+  python3 scripts/py.py scripts/ingest/split_paper.py <text_file> [--max-pages N] [--max-chars N]
 
 Prints one chunk path per line. If file is small enough, prints original path.
 """

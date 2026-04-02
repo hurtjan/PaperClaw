@@ -11,9 +11,9 @@ Workflow:
   6. If duplicate: report and leave in pdf-staging/ for user decision
 
 Usage:
-  .venv/bin/python3 scripts/ingest/ingest.py                 # process all staged PDFs
-  .venv/bin/python3 scripts/ingest/ingest.py --dry-run       # show what would happen
-  .venv/bin/python3 scripts/ingest/ingest.py --force          # skip duplicate check
+  python3 scripts/py.py scripts/ingest/ingest.py                 # process all staged PDFs
+  python3 scripts/py.py scripts/ingest/ingest.py --dry-run       # show what would happen
+  python3 scripts/py.py scripts/ingest/ingest.py --force          # skip duplicate check
 """
 
 import argparse
@@ -317,7 +317,7 @@ def main():
         if adoptions:
             log(f"\nAdoption pending — run for each external match:")
             for aid in adoptions:
-                log(f"  .venv/bin/python3 scripts/ingest/adopt_import.py {aid}")
+                log(f"  python3 scripts/py.py scripts/ingest/adopt_import.py {aid}")
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ Recipients can import via `/merge path/to/file.paperclaw`.
 
 ## Rules
 
-- Always use `.venv/bin/python3` for scripts.
+- Always use `python3 scripts/py.py` for scripts.
 - Pass through any user arguments to the script.
 
 ---
@@ -30,7 +30,7 @@ Recipients can import via `/merge path/to/file.paperclaw`.
 ## Step 1 — Run export
 
 ```
-.venv/bin/python3 scripts/enrich/export_db.py $ARGUMENTS
+python3 scripts/py.py scripts/enrich/export_db.py $ARGUMENTS
 ```
 
 Report the output: filename, size, and paper counts.

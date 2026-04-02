@@ -123,13 +123,13 @@ A sparse adjacency matrix (scipy CSR format) built from the citation links in `p
 
 ## Querying
 
-The `/query` command lets you search and explore your literature database using natural language. Under the hood, all data access goes through CLI scripts — the agent never reads the multi-megabyte JSON files directly.
+PaperClaw includes a dedicated query environment in the `query/` subdirectory. It's a standalone Claude Code project — sandboxed, read-only, with a guard hook that blocks direct file reads and a Haiku-based agent that keeps token costs low.
 
-### How it works
+```bash
+cd query && claude
+```
 
-`duckdb_query.py` loads the three JSON files plus all extraction data into an in-memory DuckDB database with **BM25 full-text search** indexes across seven tables (papers, contexts, claims, sections, keywords, topics, authors). This gives the agent fast, structured access to the entire corpus through simple CLI calls.
-
-### What you can do
+Then ask questions in natural language. The query environment has access to:
 
 - **Full-text search** — BM25-ranked search across titles, abstracts, claims, section summaries, and more
 - **Citation chains** — trace references forward or backward with configurable depth (uses recursive SQL)
@@ -137,6 +137,10 @@ The `/query` command lets you search and explore your literature database using 
 - **Author lookup** — search by author, list coauthors, find an author's full publication list
 - **Network analysis** — PageRank and Katz centrality to find structurally central papers; personalized PageRank seeded from specific papers; reverse mode to find surveys
 - **Raw SQL** — escape hatch for arbitrary DuckDB queries when built-in commands aren't enough
+
+The query database is synced automatically after `/ingest`, `/clean-db`, and `/merge`. To sync manually: `python3 query/sync.py`.
+
+> **Note:** `/query` still works in the main project context, but the `query/` subdirectory is the preferred way to query — it's cheaper, faster, and won't pollute your ingestion context.
 
 
 ## Merging databases
@@ -174,7 +178,6 @@ If you later obtain the PDF for an `external_owned` paper, `/ingest` detects the
 | Command | Purpose |
 |---------|---------|
 | `/ingest` | Full pipeline: PDF intake → extraction → linking → DB rebuild |
-| `/query` | Query the literature database for research |
 | `/merge` | Import an external PaperClaw database into the local DB |
 | `/pull-citing` | Fetch forward citations and backfill S2 IDs from Semantic Scholar |
 

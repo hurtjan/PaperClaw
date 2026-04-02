@@ -3,11 +3,11 @@
 View DB change history and roll back incremental JSON patches.
 
 Usage:
-  .venv/bin/python3 scripts/build/rollback.py                      # show last 10 changes
-  .venv/bin/python3 scripts/build/rollback.py --last 1             # undo last change
-  .venv/bin/python3 scripts/build/rollback.py --last 3             # undo last 3 changes
-  .venv/bin/python3 scripts/build/rollback.py --dry-run --last 2   # preview rollback
-  .venv/bin/python3 scripts/build/rollback.py --prune --keep-last 50  # clean old patches
+  python3 scripts/py.py scripts/build/rollback.py                      # show last 10 changes
+  python3 scripts/py.py scripts/build/rollback.py --last 1             # undo last change
+  python3 scripts/py.py scripts/build/rollback.py --last 3             # undo last 3 changes
+  python3 scripts/py.py scripts/build/rollback.py --dry-run --last 2   # preview rollback
+  python3 scripts/py.py scripts/build/rollback.py --prune --keep-last 50  # clean old patches
 """
 
 import argparse
@@ -97,7 +97,7 @@ def do_rollback(entries: list[dict], n: int, dry_run: bool) -> None:
     try:
         import jsonpatch
     except ImportError:
-        print("ERROR: jsonpatch not installed. Run: .venv/bin/pip install jsonpatch",
+        print("ERROR: jsonpatch not installed. Run: python3 scripts/pip_install.py install jsonpatch",
               file=sys.stderr)
         sys.exit(1)
 

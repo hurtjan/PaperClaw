@@ -9,7 +9,7 @@ Scoring function score_paper_pair() and candidate helpers
 find_candidates_indexed() / find_candidates() are importable by other scripts.
 
 Usage:
-  .venv/bin/python3 scripts/build/find_matches.py [--threshold N] [--limit N] [--max-group-size N]
+  python3 scripts/py.py scripts/build/find_matches.py [--threshold N] [--limit N] [--max-group-size N]
   Default threshold: 3.0
 
 Exit codes:

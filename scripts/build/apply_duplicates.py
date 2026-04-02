@@ -3,7 +3,7 @@
 Parse duplicate resolution decisions and apply merges.
 
 Usage:
-  .venv/bin/python3 scripts/build/apply_duplicates.py [--dry-run]
+  python3 scripts/py.py scripts/build/apply_duplicates.py [--dry-run]
 
 Reads:  data/tmp/duplicate_resolved.txt
 Writes: data/tmp/duplicate_merge_plan.json

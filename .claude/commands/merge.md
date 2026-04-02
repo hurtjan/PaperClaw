@@ -27,7 +27,7 @@ Duplicate resolution and author linking are handled by `/clean-db` after the mer
 
 ## Rules
 
-- Always use `.venv/bin/python3` for scripts.
+- Always use `python3 scripts/py.py` for scripts.
 - Parse `--name`, `--enrich`, `--force` from user arguments and pass through to scripts.
 
 ---
@@ -35,7 +35,7 @@ Duplicate resolution and author linking are handled by `/clean-db` after the mer
 ## Step 1 — Run naive merge
 
 ```
-.venv/bin/python3 scripts/enrich/merge_db.py <source_dir> [--name <label>] [--enrich] [--force]
+python3 scripts/py.py scripts/enrich/merge_db.py <source_dir> [--name <label>] [--enrich] [--force]
 ```
 
 The script handles:
@@ -52,7 +52,7 @@ The script handles:
 Run the DB consistency checker:
 
 ```
-.venv/bin/python3 scripts/build/check_db.py
+python3 scripts/py.py scripts/build/check_db.py
 ```
 
 If exit code is non-zero, report the errors to the user. If exit code is 0, report success with paper counts.

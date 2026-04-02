@@ -5,7 +5,7 @@ Incremental author linking with hop-based entity search.
 For each unprocessed author string, searches nearby citation-graph entities
 first (1-hop, 2-hop), then falls back to whole-DB lastname search.
 
-Usage: .venv/bin/python3 scripts/link/link_authors.py [--paper PAPER_ID ...]
+Usage: python3 scripts/py.py scripts/link/link_authors.py [--paper PAPER_ID ...]
 Writes: data/tmp/author_candidates.json, data/tmp/author_candidates.txt
         (or _1.txt, _2.txt, ... if split)
 """

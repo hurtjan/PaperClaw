@@ -1,7 +1,7 @@
 ---
 name: author-resolver
 description: "Resolve ambiguous author entity matches. Reads data/tmp/author_candidates.txt, writes data/tmp/author_resolved.txt, then runs apply_authors.py."
-tools: Read, Write, Bash(.venv/bin/python3 scripts/link/apply_authors.py)
+tools: Read, Write, Bash(python3 scripts/py.py scripts/link/apply_authors.py)
 model: haiku
 color: green
 ---
@@ -60,7 +60,7 @@ Rules:
 **Skip this step if your prompt says "Skip apply".**
 
 ```bash
-.venv/bin/python3 scripts/link/apply_authors.py
+python3 scripts/py.py scripts/link/apply_authors.py
 ```
 
 When the script completes, report your summary (authors resolved, new entities created, overrides) and print:

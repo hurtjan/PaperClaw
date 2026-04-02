@@ -12,7 +12,7 @@ Detects papers that may refer to the same work but have different IDs (e.g., pre
 
 ## Rules
 
-- Always use `.venv/bin/python3` for scripts.
+- Always use `python3 scripts/py.py` for scripts.
 - All changes are tracked as JSON Patch deltas and are fully rollbackable.
 - Show full paper titles in user-facing output. Use (Author, Year) for short mentions.
 - The `duplicate-resolver` agent applies conservative judgment: when in doubt, it skips.
@@ -32,7 +32,7 @@ Parse `$ARGUMENTS` for optional values:
 Before anything else, remove leftover decision files from previous runs so agents start with a clean slate:
 
 ```bash
-rm -f data/tmp/duplicate_candidates*.txt data/tmp/duplicate_resolved*.txt data/tmp/author_candidates*.txt data/tmp/author_resolved*.txt
+python3 -c "from pathlib import Path; [f.unlink() for p in ['duplicate_candidates','duplicate_resolved','author_candidates','author_resolved'] for f in Path('data/tmp').glob(p+'*.txt')]"
 ```
 
 This prevents agents from inheriting old skip/merge decisions and attempting deep-review reads on papers that have no local content.
@@ -44,7 +44,7 @@ This prevents agents from inheriting old skip/merge decisions and attempting dee
 Before detecting duplicates, resolve any stale alias references left by previous merges or imports:
 
 ```bash
-.venv/bin/python3 scripts/build/repair_aliases.py
+python3 scripts/py.py scripts/build/repair_aliases.py
 ```
 
 If it reports "No aliases to resolve", the DB is clean — continue to Step 1. Otherwise it will rewrite stale references and repair bidirectional edges. This is fast and safe (tracked + rollbackable).
@@ -58,7 +58,7 @@ If it reports "No aliases to resolve", the DB is clean — continue to Step 1. O
 ### Normal mode (no `--full`)
 
 ```bash
-.venv/bin/python3 scripts/build/find_matches.py [--threshold N if specified]
+python3 scripts/py.py scripts/build/find_matches.py [--threshold N if specified]
 ```
 
 Check the exit code and output:
@@ -72,7 +72,7 @@ Scores ALL pairs regardless of `dedup_pending`, processes them in ranked batches
 **On the first iteration only**, clear the skip file:
 
 ```bash
-rm -f data/tmp/full_scan_decided.txt
+python3 scripts/test/test_helpers.py rm data/tmp/full_scan_decided.txt
 ```
 
 **Each iteration:**
@@ -80,14 +80,14 @@ rm -f data/tmp/full_scan_decided.txt
 Run detection, passing the skip file so already-decided pairs are excluded:
 
 ```bash
-.venv/bin/python3 scripts/build/find_matches.py --full --skip-file data/tmp/full_scan_decided.txt [--threshold N if specified]
+python3 scripts/py.py scripts/build/find_matches.py --full --skip-file data/tmp/full_scan_decided.txt [--threshold N if specified]
 ```
 
 - **Exit code 0**: no pairs remain → skip to Step 3
 - **Exit code 2**: parse the `FILES: N` line. Continue to Step 2 — but regardless of FILES count, always instruct the agent(s) to **skip running apply_duplicates.py** (the caller handles it). After the agent(s) complete, concatenate if N > 1, then:
 
   ```bash
-  .venv/bin/python3 scripts/build/apply_duplicates.py --record-skips data/tmp/full_scan_decided.txt
+  python3 scripts/py.py scripts/build/apply_duplicates.py --record-skips data/tmp/full_scan_decided.txt
   ```
 
   Parse `Decisions: X merge(s)` from the apply output.
@@ -128,15 +128,15 @@ Skip Step 5 — do NOT run apply_duplicates.py. The caller will handle it.
 
 After **all** agents complete:
 
-1. **Concatenate** the resolved files (use Bash):
+1. **Concatenate** the resolved files:
    ```bash
-   cat data/tmp/duplicate_resolved_1.txt data/tmp/duplicate_resolved_2.txt [... up to N] > data/tmp/duplicate_resolved.txt
+   python3 scripts/test/test_helpers.py cat-to data/tmp/duplicate_resolved.txt data/tmp/duplicate_resolved_1.txt data/tmp/duplicate_resolved_2.txt [... up to N]
    ```
    List all N files explicitly in numerical order.
 
 2. **Apply** the merged decisions:
    ```bash
-   .venv/bin/python3 scripts/build/apply_duplicates.py
+   python3 scripts/py.py scripts/build/apply_duplicates.py
    ```
 
 ---
@@ -146,7 +146,7 @@ After **all** agents complete:
 Run the author linker:
 
 ```bash
-.venv/bin/python3 scripts/link/link_authors.py
+python3 scripts/py.py scripts/link/link_authors.py
 ```
 
 Check the output:
@@ -156,7 +156,7 @@ Check the output:
 ### If Judgment == 0: skip agent review, go directly to apply
 
 ```bash
-.venv/bin/python3 scripts/link/apply_authors.py
+python3 scripts/py.py scripts/link/apply_authors.py
 ```
 
 ### If FILES: 1 (single file)
@@ -188,20 +188,26 @@ After **all** agents complete:
 
 1. **Concatenate** the resolved files:
    ```bash
-   cat data/tmp/author_resolved_1.txt data/tmp/author_resolved_2.txt [... up to N] > data/tmp/author_resolved.txt
+   python3 scripts/test/test_helpers.py cat-to data/tmp/author_resolved.txt data/tmp/author_resolved_1.txt data/tmp/author_resolved_2.txt [... up to N]
    ```
 
 2. **Apply** the merged decisions:
    ```bash
-   .venv/bin/python3 scripts/link/apply_authors.py
+   python3 scripts/py.py scripts/link/apply_authors.py
    ```
 
 ---
 
-## Step 4: Final rebuild + report
+## Step 4: Final rebuild + sync query subproject
 
 ```bash
-.venv/bin/python3 scripts/build/build_duckdb.py
+python3 scripts/py.py scripts/build/build_duckdb.py
+```
+
+If the `query/` subdirectory exists, sync the fresh database to the query subproject:
+
+```bash
+python3 query/sync.py
 ```
 
 Report the outcome to the user:
@@ -209,6 +215,6 @@ Report the outcome to the user:
 - How many auto-merges were applied
 - How many judgment groups were found, merged vs. skipped
 - How many authors were linked
-- Rollback instructions: `To undo: .venv/bin/python3 scripts/build/rollback.py --last 1`
+- Rollback instructions: `To undo: python3 scripts/py.py scripts/build/rollback.py --last 1`
 
 If no groups were found and no authors needed linking, report: "Database is clean — no duplicates or unlinked authors found."

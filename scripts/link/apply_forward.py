@@ -12,7 +12,7 @@ Reads:  data/tmp/s2_forward_results.json
 Writes: data/db/papers.json
 
 Usage:
-  .venv/bin/python3 scripts/link/apply_forward.py
+  python3 scripts/py.py scripts/link/apply_forward.py
 """
 
 import json

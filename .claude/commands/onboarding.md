@@ -9,11 +9,11 @@ You are helping a user get set up with PaperClaw and oriented on how to use it.
 Check the following, running checks in parallel where possible:
 
 1. **Python venv** — does `.venv/` exist?
-   - If not: run `python3 -m venv .venv` then `.venv/bin/pip install -r requirements.txt`
-   - If it exists but packages may be stale: run `.venv/bin/pip install -r requirements.txt` (pip will skip already-satisfied deps)
+   - If not: run `python3 -m venv .venv` (or `python -m venv .venv` on Windows) then `python3 scripts/pip_install.py install -r requirements.txt`
+   - If it exists but packages may be stale: run `python3 scripts/pip_install.py install -r requirements.txt` (pip will skip already-satisfied deps)
 
 2. **DuckDB FTS extension** — does `.duckdb_extensions/` exist?
-   - If not: run `.venv/bin/python3 scripts/build/install_fts.py`
+   - If not: run `python3 scripts/py.py scripts/build/install_fts.py`
 
 3. **Data directories** — do `data/db/`, `data/pdfs/`, `data/text/`, `data/extractions/`, `data/tmp/`, and `pdf-staging/` exist?
    - Create any that are missing with `mkdir -p`
@@ -39,7 +39,7 @@ data["user"] = {
 p.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
 ```
 
-Run this with `.venv/bin/python3 -c "..."` (inline the snippet).
+Run this with `python3 scripts/py.py -c "..."` (inline the snippet).
 
 **If `user:` already exists:**
 - Greet the user by name.
@@ -91,7 +91,7 @@ Present the available skills grouped by workflow phase. Use a clean table or gro
 - `/merge` — Import an external PaperClaw database into your local corpus.
 
 **Querying**
-- `/query` — Ask natural-language questions about your literature corpus.
+- **`query/` subdirectory** — Open Claude Code in the `query/` folder (`cd query && claude`) to ask natural-language questions about your literature. This is a sandboxed, read-only environment with a dedicated Haiku agent that keeps token costs low. The database syncs automatically after `/ingest`, `/clean-db`, and `/merge`.
 
 **Expanding your corpus**
 - `/pull-citing` — Fetch papers that cite your owned papers from Semantic Scholar (forward citations).
@@ -107,7 +107,7 @@ Show the core workflow as a numbered list:
 
 1. Drop PDFs into `pdf-staging/`
 2. Run `/ingest` — extracts text, identifies references, links citations, rebuilds the query index
-3. Run `/query` — ask questions about your literature in natural language
+3. Open the query environment — `cd query && claude` — and ask questions about your literature
 4. Run `/pull-citing` — discovers papers published *after* yours that cite them (forward citations)
 5. Repeat: drop newly discovered PDFs into staging, ingest, query
 
@@ -126,7 +126,7 @@ Then explain Semantic Scholar integration:
 
 Assess the current state of the database:
 
-- Run `.venv/bin/python3 scripts/build/check_db.py` if `data/db/papers.json` exists, to get a summary of what's in the DB.
+- Run `python3 scripts/py.py scripts/build/check_db.py` if `data/db/papers.json` exists, to get a summary of what's in the DB.
 - Check `pdf-staging/` for any PDFs waiting to be ingested.
 
 Give the user a brief, plain-English status:
@@ -140,7 +140,7 @@ Based on the project state, suggest the most useful next step:
 - **Empty database, no PDFs in staging:** "Drop PDFs into `pdf-staging/` and run `/ingest` to get started."
 - **Empty database, PDFs in staging:** "You have N PDFs ready — run `/ingest` to extract and add them to the database."
 - **Database has papers, PDFs in staging:** "You have N PDFs waiting — run `/ingest` to add them."
-- **Database has papers, nothing in staging:** "Your database is set up with N papers. Try `/query <your question>` to explore your literature."
+- **Database has papers, nothing in staging:** "Your database is set up with N papers. Open the query environment (`cd query && claude`) to explore your literature."
 
 Then show example queries that demonstrate the power of the cross-referenced corpus.
 

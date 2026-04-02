@@ -9,7 +9,7 @@ the local pdf_file and text_file paths.
 Since extraction files are not imported, run /extract then /link after adopting.
 
 Usage:
-  .venv/bin/python3 scripts/ingest/adopt_import.py <paper_id>
+  python3 scripts/py.py scripts/ingest/adopt_import.py <paper_id>
 """
 
 import json

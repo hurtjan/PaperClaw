@@ -6,8 +6,8 @@ Supports incremental mode: only re-processes extractions whose mtime changed
 since the last build. Use --force for a full rebuild.
 
 Usage:
-  .venv/bin/python3 scripts/build/build_index.py
-  .venv/bin/python3 scripts/build/build_index.py --force
+  python3 scripts/py.py scripts/build/build_index.py
+  python3 scripts/py.py scripts/build/build_index.py --force
 """
 
 import json

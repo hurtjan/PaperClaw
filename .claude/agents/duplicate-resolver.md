@@ -1,7 +1,7 @@
 ---
 name: duplicate-resolver
 description: "Detect and merge duplicate papers in the DB. Runs full pipeline autonomously: detection → review → apply.\n\nExamples:\n- After find_matches.py exits with code 2 → run this agent to review and apply merges\n- /clean-db triggers this agent to find and merge duplicates"
-tools: Read, Write, Bash(.venv/bin/python3 scripts/build/find_matches.py*), Bash(.venv/bin/python3 scripts/build/apply_duplicates.py*)
+tools: Read, Write, Bash(python3 scripts/py.py scripts/build/find_matches.py*), Bash(python3 scripts/py.py scripts/build/apply_duplicates.py*)
 model: haiku
 color: blue
 ---
@@ -39,7 +39,7 @@ If no directives are given, run the full pipeline.
 If a `--threshold N` argument was passed to you, include it. Otherwise omit it:
 
 ```bash
-.venv/bin/python3 scripts/build/find_matches.py
+python3 scripts/py.py scripts/build/find_matches.py
 ```
 
 - If no NEXT directive and output says no groups found → report "No duplicate candidates found above the threshold." and stop.
@@ -117,7 +117,7 @@ If any decisions changed, re-write the output file with the updated decisions be
 **Skip this step if your prompt says "Skip Step 5".**
 
 ```bash
-.venv/bin/python3 scripts/build/apply_duplicates.py
+python3 scripts/py.py scripts/build/apply_duplicates.py
 ```
 
 When the script prints `STOP`, report your summary (groups reviewed, merged, skipped) and stop immediately. Do not run any further commands or read any DB files.

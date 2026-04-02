@@ -3,7 +3,7 @@
 Unit tests for find_matches.py internals.
 Runs standalone without needing the full DB. Exits 0 on pass, 1 on failure.
 
-Usage: .venv/bin/python3 scripts/build/test_find_matches.py
+Usage: python3 scripts/py.py scripts/build/test_find_matches.py
 """
 
 import sys

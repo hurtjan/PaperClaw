@@ -8,7 +8,7 @@ Arguments: $ARGUMENTS
 
 ## Rules
 
-- Always use `.venv/bin/python3` for scripts.
+- Always use `python3 scripts/py.py` for scripts.
 - No agents needed — pure Python script.
 - After downloading, remind the user to run `/ingest` to extract and integrate the PDFs.
 - Setting `S2_API_KEY` is recommended: it enables higher rate limits and is the only path for SSRN PDFs.
@@ -33,15 +33,15 @@ Covers arXiv, bioRxiv, medRxiv, SSRN, PMC, and some publishers in a single API c
 ### Download a single paper by arXiv ID
 
 ```
-.venv/bin/python3 scripts/enrich/fetch_preprints.py --id 2303.14223
+python3 scripts/py.py scripts/enrich/fetch_preprints.py --id 2303.14223
 ```
 
 Accepts bare arXiv IDs, DOIs, full URLs, or DB paper IDs interchangeably:
 
 ```
-.venv/bin/python3 scripts/enrich/fetch_preprints.py --id 10.48550/arxiv.2303.14223
-.venv/bin/python3 scripts/enrich/fetch_preprints.py --id https://arxiv.org/abs/2303.14223
-.venv/bin/python3 scripts/enrich/fetch_preprints.py --id 10.1101/2023.04.01.535123
+python3 scripts/py.py scripts/enrich/fetch_preprints.py --id 10.48550/arxiv.2303.14223
+python3 scripts/py.py scripts/enrich/fetch_preprints.py --id https://arxiv.org/abs/2303.14223
+python3 scripts/py.py scripts/enrich/fetch_preprints.py --id 10.1101/2023.04.01.535123
 ```
 
 ### Download PDFs for all external_owned entries
@@ -49,26 +49,26 @@ Accepts bare arXiv IDs, DOIs, full URLs, or DB paper IDs interchangeably:
 These are papers already in the DB as `external_owned` (imported from another corpus) that lack local PDFs. Downloading them enables full text extraction.
 
 ```
-.venv/bin/python3 scripts/enrich/fetch_preprints.py --all-external
+python3 scripts/py.py scripts/enrich/fetch_preprints.py --all-external
 ```
 
 ### Download PDFs for specific DB papers (stubs or external_owned)
 
 ```
-.venv/bin/python3 scripts/enrich/fetch_preprints.py --paper smith_2020_climate jones_2019_neural
+python3 scripts/py.py scripts/enrich/fetch_preprints.py --paper smith_2020_climate jones_2019_neural
 ```
 
 ### Batch download stubs with DOIs (preview first)
 
 ```
-.venv/bin/python3 scripts/enrich/fetch_preprints.py --all-stubs --dry-run
-.venv/bin/python3 scripts/enrich/fetch_preprints.py --all-stubs --max 20
+python3 scripts/py.py scripts/enrich/fetch_preprints.py --all-stubs --dry-run
+python3 scripts/py.py scripts/enrich/fetch_preprints.py --all-stubs --max 20
 ```
 
 ### Re-attempt previously failed downloads
 
 ```
-.venv/bin/python3 scripts/enrich/fetch_preprints.py --all-external --force
+python3 scripts/py.py scripts/enrich/fetch_preprints.py --all-external --force
 ```
 
 ---

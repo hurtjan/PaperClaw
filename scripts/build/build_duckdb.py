@@ -7,10 +7,10 @@ DuckDB tables used by duckdb_query.py. Supports incremental builds (skips
 groups whose source files haven't changed) and optional FTS index creation.
 
 Usage:
-  .venv/bin/python3 scripts/build/build_duckdb.py
-  .venv/bin/python3 scripts/build/build_duckdb.py --force
-  .venv/bin/python3 scripts/build/build_duckdb.py --fts
-  .venv/bin/python3 scripts/build/build_duckdb.py --force --fts
+  python3 scripts/py.py scripts/build/build_duckdb.py
+  python3 scripts/py.py scripts/build/build_duckdb.py --force
+  python3 scripts/py.py scripts/build/build_duckdb.py --fts
+  python3 scripts/py.py scripts/build/build_duckdb.py --force --fts
 """
 
 import argparse
@@ -26,7 +26,7 @@ from pathlib import Path
 try:
     import duckdb
 except ImportError:
-    print("ERROR: duckdb not installed. Run: .venv/bin/pip install duckdb", file=sys.stderr)
+    print("ERROR: duckdb not installed. Run: python3 scripts/pip_install.py install duckdb", file=sys.stderr)
     sys.exit(1)
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -190,6 +190,13 @@ def build_db(con, force=False, fts=False):
                 authors_str = "; ".join(str(a) for a in raw_authors)
             else:
                 authors_str = str(raw_authors) if raw_authors else ""
+            em = p.get("extraction_meta")
+            if em:
+                detail = em.get("detail_level", "")
+                passes = ",".join(str(x) for x in sorted(em.get("passes_completed", [])))
+            else:
+                detail = None
+                passes = None
             paper_rows.append({
                 "paper_id": pid,
                 "type": p.get("type", ""),
@@ -201,12 +208,15 @@ def build_db(con, force=False, fts=False):
                 "abstract": p.get("abstract", ""),
                 "pdf_file": p.get("pdf_file", ""),
                 "text_file": p.get("text_file", ""),
+                "detail_level": detail,
+                "passes_completed": passes,
             })
 
         _bulk_load(con, "papers", paper_rows,
             "paper_id VARCHAR, type VARCHAR, title VARCHAR, authors VARCHAR, "
             "year INTEGER, journal VARCHAR, doi VARCHAR, abstract VARCHAR, "
-            "pdf_file VARCHAR, text_file VARCHAR")
+            "pdf_file VARCHAR, text_file VARCHAR, "
+            "detail_level VARCHAR, passes_completed VARCHAR")
 
         edge_rows = []
         for pid, p in papers_data.items():
@@ -423,7 +433,7 @@ def build_db(con, force=False, fts=False):
         con.execute("INSERT INTO _fts_meta VALUES (?, ?)", [now_str, owned_count])
     elif not fts and not fts_ok and any(rebuilt.values()):
         print("  WARNING: FTS extension not available. BM25 search disabled.")
-        print("  To enable: run `.venv/bin/python3 scripts/build/install_fts.py` once, then rebuild with --fts.")
+        print("  To enable: run `python3 scripts/py.py scripts/build/install_fts.py` once, then rebuild with --fts.")
 
     elapsed = time.time() - t0
     changed_groups = [k for k, v in rebuilt.items() if v]

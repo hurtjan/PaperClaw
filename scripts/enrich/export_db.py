@@ -6,7 +6,7 @@ Creates a zip containing manifest.json, DB files, and extraction JSONs.
 Recipients can import via:  /merge path/to/file.paperclaw
 
 Usage:
-  .venv/bin/python3 scripts/enrich/export_db.py [--output FILE] [--no-extractions]
+  python3 scripts/py.py scripts/enrich/export_db.py [--output FILE] [--no-extractions]
 """
 
 import argparse

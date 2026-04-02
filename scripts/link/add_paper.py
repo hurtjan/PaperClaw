@@ -6,7 +6,7 @@ Creates the owned paper entry (or upgrades an existing stub/external_owned),
 creates stubs for each citation that doesn't already exist, wires bidirectional
 cites/cited_by edges, and rebuilds the index.
 
-Usage: .venv/bin/python3 scripts/link/add_paper.py data/extractions/{id}.json
+Usage: python3 scripts/py.py scripts/link/add_paper.py data/extractions/{id}.json
 """
 
 import json
@@ -25,7 +25,7 @@ PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: .venv/bin/python3 scripts/link/add_paper.py data/extractions/{id}.json")
+        print("Usage: python3 scripts/py.py scripts/link/add_paper.py data/extractions/{id}.json")
         sys.exit(1)
 
     extraction_path = Path(sys.argv[1])

@@ -36,6 +36,9 @@ research/*
 # Extensions cache
 .duckdb_extensions/
 
+# IDE / editor history
+.history/
+
 # Claude Code user-specific
 .claude/settings.local.json
 .claude/plans/
@@ -44,3 +47,8 @@ research/*
 # User custom agents and commands (local-* prefix)
 .claude/agents/local-*.md
 .claude/commands/local-*.md
+
+# Query subproject — track structure, ignore user data
+query/data/
+query/research/
+query/.venv

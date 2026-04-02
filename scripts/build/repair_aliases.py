@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Repair stale alias references and re-enrich canonicals from their aliases.
 
-Usage: .venv/bin/python3 scripts/build/repair_aliases.py [--dry-run]
+Usage: python3 scripts/py.py scripts/build/repair_aliases.py [--dry-run]
 """
 
 import argparse

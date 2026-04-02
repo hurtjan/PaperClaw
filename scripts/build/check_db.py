@@ -5,7 +5,7 @@ Consistency checker for data/db/papers.json.
 Checks: bidirectional cites/cited_by, dangling refs, self-citations,
 required fields, metadata counts, version links, duplicates, orphans.
 
-Usage: .venv/bin/python3 scripts/build/check_db.py [--quiet]
+Usage: python3 scripts/py.py scripts/build/check_db.py [--quiet]
 Exit code: 0 if clean, 1 if errors.
 """
 

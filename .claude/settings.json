@@ -1,14 +1,24 @@
 {
   "permissions": {
     "allow": [
-      "Bash(.venv/bin/python3 scripts/ingest/* *)",
-      "Bash(.venv/bin/python3 scripts/link/* *)",
-      "Bash(.venv/bin/python3 scripts/query/* *)",
-      "Bash(.venv/bin/python3 scripts/build/* *)",
-      "Bash(.venv/bin/python3 scripts/enrich/* *)",
+      "Bash(python3 scripts/py.py scripts/ingest/* *)",
+      "Bash(python3 scripts/py.py scripts/link/* *)",
+      "Bash(python3 scripts/py.py scripts/query/* *)",
+      "Bash(python3 scripts/py.py scripts/build/* *)",
+      "Bash(python3 scripts/py.py scripts/enrich/* *)",
+      "Bash(python scripts/py.py scripts/ingest/* *)",
+      "Bash(python scripts/py.py scripts/link/* *)",
+      "Bash(python scripts/py.py scripts/query/* *)",
+      "Bash(python scripts/py.py scripts/build/* *)",
+      "Bash(python scripts/py.py scripts/enrich/* *)",
       "Bash(python3 -m venv .venv)",
-      "Bash(.venv/bin/pip install -r requirements.txt)",
-      "Bash(bash scripts/hooks/*)",
+      "Bash(python -m venv .venv)",
+      "Bash(python3 scripts/pip_install.py install *)",
+      "Bash(python scripts/pip_install.py install *)",
+      "Bash(python3 scripts/hooks/*)",
+      "Bash(python scripts/hooks/*)",
+      "Bash(python3 scripts/test/test_helpers.py *)",
+      "Bash(python scripts/test/test_helpers.py *)",
       "Bash(mkdir -p data/*)",
       "Bash(mkdir -p pdf-staging)"
     ]
@@ -26,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash scripts/hooks/check_onboarding.sh",
+            "command": "python3 scripts/hooks/check_onboarding.py",
             "timeout": 10
           }
         ]

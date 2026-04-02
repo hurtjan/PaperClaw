@@ -12,7 +12,7 @@ Arguments: $ARGUMENTS
 ## Rules
 
 - **If /query was run in this context**, warn: _"This context was used for querying. For best results, it's recommended to run ingestion in a separate context."_ Ask to confirm before proceeding.
-- Always use `.venv/bin/python3` for scripts.
+- Always use `python3 scripts/py.py` for scripts.
 - Always invoke agents via the Agent tool, never via Bash.
 - **Responsibility split:** Agents comprehend, Python computes. Agents never read `data/db/papers.json`, `data/db/authors.json`, or `data/db/contexts.json` directly (too large). All writes go through Python scripts.
 - **Truncation = hard error:** If an agent's output lacks a DONE line, retry with the `-large` (Sonnet) fallback.
@@ -22,8 +22,8 @@ Arguments: $ARGUMENTS
 
 ## Phase 1 — PDF Intake
 
-1. Run `.venv/bin/python3 scripts/ingest/check_new_pdfs.py` to check for unprocessed PDFs in storage (PDFs in `data/pdfs/` lacking extracted text in `data/text/`).
-2. Run `.venv/bin/python3 scripts/ingest/ingest.py` — extracts text, checks duplicates, moves accepted PDFs to `data/pdfs/`.
+1. Run `python3 scripts/py.py scripts/ingest/check_new_pdfs.py` to check for unprocessed PDFs in storage (PDFs in `data/pdfs/` lacking extracted text in `data/text/`).
+2. Run `python3 scripts/py.py scripts/ingest/ingest.py` — extracts text, checks duplicates, moves accepted PDFs to `data/pdfs/`.
 3. If ingest reports potential duplicates, run the `duplicate-checker` agent — it reads `data/tmp/pending_duplicates.json` and tells the user whether each is a true duplicate.
 
    **After the duplicate-checker completes:** Check whether any DUPLICATE verdicts include an incomplete-extraction note (passes_completed fewer than 4). If so, ask the user:
@@ -35,7 +35,7 @@ Arguments: $ARGUMENTS
 
    If the user says yes, include those papers in Phase 2 extraction using their existing paper ID and text file path (`data/text/<pdf_stem>.txt`), skipping any passes already completed in `extraction_meta.passes_completed`.
 
-4. If ingest reports **EXTERNAL MATCH** or **STUB MATCH** lines, run `.venv/bin/python3 scripts/ingest/adopt_import.py <paper_id>` for each — this promotes the `external_owned` or `stub` entry to `owned` and wires up the local PDF/text paths. The paper is then ready for normal extraction in Phase 2.
+4. If ingest reports **EXTERNAL MATCH** or **STUB MATCH** lines, run `python3 scripts/py.py scripts/ingest/adopt_import.py <paper_id>` for each — this promotes the `external_owned` or `stub` entry to `owned` and wires up the local PDF/text paths. The paper is then ready for normal extraction in Phase 2.
 
 **Paths:** `pdf-staging/` (input), `data/pdfs/` (accepted), `data/text/` (extracted text), `data/tmp/pending_duplicates.json`
 
@@ -106,7 +106,7 @@ Prompt (substitute the original text file path for `{text_file}`; `{id}` is not 
 **Step 2 — Generate refs sidecar** (Bash, not an agent)
 
 ```bash
-.venv/bin/python3 scripts/ingest/gen_refs_sidecar.py {id}
+python3 scripts/py.py scripts/ingest/gen_refs_sidecar.py {id}
 ```
 
 - Reads: `data/extractions/{id}.json`
@@ -158,13 +158,13 @@ Prompt (substitute the original text file path for `{text_file}` and the paper I
 **Step 4 — Final merge: all passes**
 
 ```bash
-.venv/bin/python3 scripts/ingest/merge_extraction.py {id}
+python3 scripts/py.py scripts/ingest/merge_extraction.py {id}
 ```
 
 - Reads: `{id}.json`, `{id}.contexts.json`, `{id}.refs.json`, `{id}.analysis.json` (if present), `{id}.sections.json` (if present)
 - Writes: `{id}.json` (merged), deletes sidecar files
 
-For large papers, run `.venv/bin/python3 scripts/ingest/split_paper.py` to split text before extraction.
+For large papers, run `python3 scripts/py.py scripts/ingest/split_paper.py` to split text before extraction.
 
 **Paths:** `data/text/` (input), `data/extractions/` (output), `project.yaml` (pass config)
 
@@ -175,7 +175,7 @@ For large papers, run `.venv/bin/python3 scripts/ingest/split_paper.py` to split
 For each newly extracted paper, run directly (no agent needed):
 
 ```bash
-.venv/bin/python3 scripts/link/add_paper.py data/extractions/{id}.json
+python3 scripts/py.py scripts/link/add_paper.py data/extractions/{id}.json
 ```
 
 This creates the owned paper entry + citation stubs + edges. No matching, no agent involvement. Run sequentially (one at a time).
@@ -186,7 +186,7 @@ This creates the owned paper entry + citation stubs + edges. No matching, no age
 
 ## Phase 4 — Database Rebuild
 
-1. `.venv/bin/python3 scripts/build/build_duckdb.py` — rebuild DuckDB (skips FTS for speed). Relay the `FTS index:` status line from the output to the user.
+1. `python3 scripts/py.py scripts/build/build_duckdb.py` — rebuild DuckDB (skips FTS for speed). Relay the `FTS index:` status line from the output to the user.
 
 **Paths:** `data/db/contexts.json`, `data/db/lit.duckdb`
 

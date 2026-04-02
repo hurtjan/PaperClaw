@@ -8,8 +8,8 @@ owned papers. A subsequent apply_forward.py step creates stubs, then /clean-db
 deduplicates.
 
 Usage:
-  .venv/bin/python3 scripts/enrich/fetch_forward_citations.py --paper ID [ID ...] [options]
-  .venv/bin/python3 scripts/enrich/fetch_forward_citations.py --all [options]
+  python3 scripts/py.py scripts/enrich/fetch_forward_citations.py --paper ID [ID ...] [options]
+  python3 scripts/py.py scripts/enrich/fetch_forward_citations.py --all [options]
 
 Options:
   --force              Re-fetch even if fetched within 30 days
@@ -488,7 +488,7 @@ def main():
     print(f"  Papers skipped (cached): {skipped}")
     print(f"  Total citing papers:     {total_citing}")
     if not args.dry_run and raw_results:
-        print(f"\nNEXT: .venv/bin/python3 scripts/link/apply_forward.py")
+        print(f"\nNEXT: python3 scripts/py.py scripts/link/apply_forward.py")
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ Always show full paper title at least once. Use (Author, Year) for short mention
 
 ### Python environment
 
-Always use `.venv/bin/python3` for scripts. Install with `.venv/bin/pip install <pkg>` and add to `requirements.txt`. Core libraries: `scripts/lib/litdb.py` (shared utilities, JSON I/O, normalization) and `scripts/lib/db.py` (DuckDB acceleration layer).
+Always use `python3 scripts/py.py` for scripts (cross-platform venv forwarder). Install with `python3 scripts/pip_install.py install <pkg>` and add to `requirements.txt`. On Windows, use `python` instead of `python3`. Core libraries: `scripts/lib/litdb.py` (shared utilities, JSON I/O, normalization) and `scripts/lib/db.py` (DuckDB acceleration layer).
 
 ### JSON serialization
 
@@ -59,7 +59,6 @@ Build pipeline order (all in `scripts/build/`):
 | Skill | Purpose | When to use |
 |---|---|---|
 | `/onboarding` | First-run setup, user profile, skill guide, and project orientation | New install, first run (auto-triggers if no user profile), setup problems, or "how do I get started" |
-| `/query` | Query the literature database for research | User asks questions about the literature, wants to search/explore |
 | `/ingest` | Full pipeline: PDF intake → extraction → linking → DB rebuild | User drops new PDFs or says "ingest/add this paper" |
 | `/merge` | Import an external PaperClaw DB into the local DB | User wants to merge/import papers from another corpus |
 | `/export` | Bundle the local DB into a shareable .paperclaw file | User wants to share their database or create a portable backup |
@@ -67,6 +66,16 @@ Build pipeline order (all in `scripts/build/`):
 | `/fetch-preprints` | Download PDFs from preprint servers (arXiv, bioRxiv, medRxiv, SSRN) | User wants to download papers from preprint servers or populate pdf-staging/ |
 | `/test` | End-to-end pipeline test using fixture PDFs | Verify pipeline works after changes, or first-time validation |
 | `/clean-db` | Find and merge duplicate papers, then link authors | User wants to deduplicate the database, merge preprint/published versions, link authors, or after /ingest and /merge |
+
+## Query Environment
+
+The `query/` subdirectory is a standalone Claude Code project for querying the literature database. It is sandboxed and read-only — a guard hook blocks direct file reads, forcing all data access through the query scripts, and a dedicated Haiku agent (`query-executor`) keeps token costs low.
+
+**Launch:** `cd query && claude`, then ask questions in natural language.
+
+**Sync:** The query database is refreshed automatically after `/ingest`, `/clean-db`, and `/merge`. To sync manually: `python3 query/sync.py` from the project root.
+
+**If the user asks a paper or literature question in the main context, tell them to open the query environment instead:** _"For querying, open a Claude Code session in the `query/` subdirectory: `cd query && claude`."_
 
 ## Files & Customization
 

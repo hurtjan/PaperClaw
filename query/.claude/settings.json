@@ -1,0 +1,25 @@
+{
+  "claudeMdExcludes": [
+    "../CLAUDE.md",
+    "../.claude/**"
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(python3 scripts/py.py scripts/query/* *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 hooks/guard_db_read.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

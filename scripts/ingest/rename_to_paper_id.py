@@ -7,8 +7,8 @@ their original filenames. This script renames them to {paper_id}.txt/.pdf
 and updates the extraction JSON paths.
 
 Usage:
-  .venv/bin/python3 scripts/ingest/rename_to_paper_id.py <paper_id>
-  .venv/bin/python3 scripts/ingest/rename_to_paper_id.py --all   # rename all mismatched
+  python3 scripts/py.py scripts/ingest/rename_to_paper_id.py <paper_id>
+  python3 scripts/py.py scripts/ingest/rename_to_paper_id.py --all   # rename all mismatched
 """
 
 import json

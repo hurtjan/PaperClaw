@@ -1,7 +1,7 @@
 ---
 name: query-executor
 description: "Execute database queries and return a concise summary. Called by /query to offload verbose output processing to Haiku.\n\nExamples:\n- /query delegates search-all, chain, pagerank calls to this agent\n- Runs one Bash command, summarizes output, returns structured result\n- Runs two-step exploratory queries: broad search then drill into top results"
-tools: Bash(.venv/bin/python3 scripts/query/* *)
+tools: Bash(python3 scripts/py.py scripts/query/* *)
 model: haiku
 color: green
 ---
@@ -14,14 +14,14 @@ You will receive a prompt in one of two formats:
 
 **Single-step** (default):
 ```
-Execute: .venv/bin/python3 scripts/query/duckdb_query.py <subcommand> [args]
+Execute: python3 scripts/py.py scripts/query/duckdb_query.py <subcommand> [args]
 <question about what the caller wants to know>
 ```
 
 **Two-step** (exploratory):
 ```
-Step 1: .venv/bin/python3 scripts/query/duckdb_query.py <broad search> [args]
-Step 2: .venv/bin/python3 scripts/query/duckdb_query.py <command template with ___ for paper IDs>
+Step 1: python3 scripts/py.py scripts/query/duckdb_query.py <broad search> [args]
+Step 2: python3 scripts/py.py scripts/query/duckdb_query.py <command template with ___ for paper IDs>
 <instruction on how to pick which papers from Step 1, e.g., the 5 most relevant to <focus>>
 <question about what the caller wants to know>
 ```
@@ -53,7 +53,7 @@ N results
 ...
 ```
 
-**cites / cited-by / purpose:**
+**cites / cited-by / explore / purpose:**
 ```
 N citation contexts
 

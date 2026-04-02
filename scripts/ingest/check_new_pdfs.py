@@ -3,9 +3,9 @@
 Check which PDFs in data/pdfs/ have not yet been extracted.
 
 Usage:
-  .venv/bin/python3 scripts/ingest/check_new_pdfs.py
-  .venv/bin/python3 scripts/ingest/check_new_pdfs.py -q        # filenames only
-  .venv/bin/python3 scripts/ingest/check_new_pdfs.py --all      # also show processed
+  python3 scripts/py.py scripts/ingest/check_new_pdfs.py
+  python3 scripts/py.py scripts/ingest/check_new_pdfs.py -q        # filenames only
+  python3 scripts/py.py scripts/ingest/check_new_pdfs.py --all      # also show processed
 
 Exit code: 1 if unprocessed PDFs exist, 0 otherwise.
 """

@@ -9,10 +9,10 @@ Resolution strategy:
   Tier 2 — Direct URL construction (arXiv, bioRxiv, medRxiv fallback only)
 
 Usage:
-  .venv/bin/python3 scripts/enrich/fetch_preprints.py --id ID [ID ...]
-  .venv/bin/python3 scripts/enrich/fetch_preprints.py --paper ID [ID ...]
-  .venv/bin/python3 scripts/enrich/fetch_preprints.py --all-external
-  .venv/bin/python3 scripts/enrich/fetch_preprints.py --all-stubs
+  python3 scripts/py.py scripts/enrich/fetch_preprints.py --id ID [ID ...]
+  python3 scripts/py.py scripts/enrich/fetch_preprints.py --paper ID [ID ...]
+  python3 scripts/py.py scripts/enrich/fetch_preprints.py --all-external
+  python3 scripts/py.py scripts/enrich/fetch_preprints.py --all-stubs
 
 Options:
   --dry-run       Show what would be downloaded, no actual downloads

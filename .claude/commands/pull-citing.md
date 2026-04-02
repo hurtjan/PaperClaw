@@ -10,9 +10,17 @@ Arguments: $ARGUMENTS
 - `ids`: Backfill S2 paper IDs on papers missing them.
 - Optional paper IDs to limit scope.
 
+## Query-dir handoff
+
+Before running, check if `query/data/pull_citing.txt` exists (written by the query subproject's `request-pull` command). If it does:
+1. Read the paper IDs from the file (one per line).
+2. Show the user which papers were queued and ask whether to proceed.
+3. Use those IDs as `--paper` arguments to the fetch script.
+4. Delete `query/data/pull_citing.txt` after successful fetching.
+
 ## Rules
 
-- Always use `.venv/bin/python3` for scripts.
+- Always use `python3 scripts/py.py` for scripts.
 - Recommend setting `S2_API_KEY` env var for title search and higher rate limits.
 
 ---
@@ -24,7 +32,7 @@ Fetch citing papers via S2, create stubs, then deduplicate with /clean-db.
 ### Step 1: Fetch S2 data
 
 ```
-.venv/bin/python3 scripts/enrich/fetch_forward_citations.py [--paper ID ...| --all] [--force] [--max-per-paper N]
+python3 scripts/py.py scripts/enrich/fetch_forward_citations.py [--paper ID ...| --all] [--force] [--max-per-paper N]
 ```
 
 - Resolves S2 paper IDs (via DOI then title search fallback)
@@ -36,7 +44,7 @@ Fetch citing papers via S2, create stubs, then deduplicate with /clean-db.
 ### Step 2: Create stubs
 
 ```
-.venv/bin/python3 scripts/link/apply_forward.py
+python3 scripts/py.py scripts/link/apply_forward.py
 ```
 
 Creates stubs for all citing papers not already in the DB (exact-match by DOI/S2 ID). New stubs are marked `dedup_pending=True`. Wires `forward_cited_by` edges on owned papers.
@@ -54,13 +62,13 @@ Resolve Semantic Scholar paper IDs for owned papers that don't have one yet. Use
 The forward citation script resolves S2 IDs automatically as part of its workflow. To backfill IDs without fetching citations, use `--dry-run`:
 
 ```
-.venv/bin/python3 scripts/enrich/fetch_forward_citations.py --all --dry-run
+python3 scripts/py.py scripts/enrich/fetch_forward_citations.py --all --dry-run
 ```
 
 This resolves and prints S2 IDs for all owned papers without writing citation data. To persist the resolved IDs, run without `--dry-run`:
 
 ```
-.venv/bin/python3 scripts/enrich/fetch_forward_citations.py --all
+python3 scripts/py.py scripts/enrich/fetch_forward_citations.py --all
 ```
 
 - To limit to specific papers: `--paper <id1> <id2>`

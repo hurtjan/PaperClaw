@@ -34,7 +34,7 @@ MAX_BUCKET_SIZE = 200
 def _get_connection():
     """Get a connection to the persistent DuckDB file."""
     if duckdb is None:
-        raise ImportError("duckdb not installed. Run: .venv/bin/pip install duckdb")
+        raise ImportError("duckdb not installed. Run: python3 scripts/pip_install.py install duckdb")
     con = duckdb.connect(str(DB_FILE))
     _ensure_changes_table(con)
     return con

@@ -8,10 +8,10 @@ Extraction files are NOT imported. No fuzzy matching — run /clean-db after
 to resolve duplicates and link authors.
 
 Usage:
-  .venv/bin/python3 scripts/enrich/merge_db.py <source_dir>
-  .venv/bin/python3 scripts/enrich/merge_db.py <source_dir> --name <label>
-  .venv/bin/python3 scripts/enrich/merge_db.py <source_dir> --force    # overwrite existing external_owned
-  .venv/bin/python3 scripts/enrich/merge_db.py <source_dir> --enrich   # enrich local with external metadata
+  python3 scripts/py.py scripts/enrich/merge_db.py <source_dir>
+  python3 scripts/py.py scripts/enrich/merge_db.py <source_dir> --name <label>
+  python3 scripts/py.py scripts/enrich/merge_db.py <source_dir> --force    # overwrite existing external_owned
+  python3 scripts/py.py scripts/enrich/merge_db.py <source_dir> --enrich   # enrich local with external metadata
 """
 
 import argparse
