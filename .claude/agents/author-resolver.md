@@ -1,7 +1,7 @@
 ---
 name: author-resolver
 description: "Resolve ambiguous author entity matches. Reads data/tmp/author_candidates.txt, writes data/tmp/author_resolved.txt, then runs apply_authors.py."
-tools: Read, Write, Bash(python3 scripts/py.py scripts/link/apply_authors.py)
+tools: Read, Write, Bash(python3 scripts/py.py scripts/link/apply_authors.py), Bash(python scripts/py.py scripts/link/apply_authors.py)
 model: haiku
 color: green
 ---

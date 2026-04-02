@@ -7,5 +7,5 @@ import re
 from pathlib import Path
 
 p = Path("project.yaml")
-if not p.exists() or not re.search(r"^user:", p.read_text(), re.MULTILINE):
+if not p.exists() or not re.search(r"^user:", p.read_text(encoding="utf-8"), re.MULTILINE):
     print("[AUTO-START] No user profile found. Run /onboarding to set up PaperClaw.")

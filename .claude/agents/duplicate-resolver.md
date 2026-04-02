@@ -1,7 +1,7 @@
 ---
 name: duplicate-resolver
 description: "Detect and merge duplicate papers in the DB. Runs full pipeline autonomously: detection → review → apply.\n\nExamples:\n- After find_matches.py exits with code 2 → run this agent to review and apply merges\n- /clean-db triggers this agent to find and merge duplicates"
-tools: Read, Write, Bash(python3 scripts/py.py scripts/build/find_matches.py*), Bash(python3 scripts/py.py scripts/build/apply_duplicates.py*)
+tools: Read, Write, Bash(python3 scripts/py.py scripts/build/find_matches.py*), Bash(python3 scripts/py.py scripts/build/apply_duplicates.py*), Bash(python scripts/py.py scripts/build/find_matches.py*), Bash(python scripts/py.py scripts/build/apply_duplicates.py*)
 model: haiku
 color: blue
 ---

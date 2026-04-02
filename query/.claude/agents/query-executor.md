@@ -1,7 +1,7 @@
 ---
 name: query-executor
 description: "Execute database queries and return a concise summary. Called by /query to offload verbose output processing to Haiku.\n\nExamples:\n- /query delegates search-all, chain, pagerank calls to this agent\n- Runs one Bash command, summarizes output, returns structured result\n- Runs two-step exploratory queries: broad search then drill into top results"
-tools: Bash(python3 scripts/py.py scripts/query/* *)
+tools: Bash(python3 scripts/py.py scripts/query/* *), Bash(python scripts/py.py scripts/query/* *)
 model: haiku
 color: green
 ---

@@ -2,11 +2,13 @@
   "claudeMdExcludes": [
     "../CLAUDE.md",
     "../.claude/**",
-    "**/PaperClaw/CLAUDE.md"
+    "**/PaperClaw/CLAUDE.md",
+    "**/PaperClaw/.claude/**"
   ],
   "permissions": {
     "allow": [
-      "Bash(python3 scripts/py.py scripts/query/* *)"
+      "Bash(python3 scripts/py.py scripts/query/* *)",
+      "Bash(python scripts/py.py scripts/query/* *)"
     ]
   },
   "hooks": {
