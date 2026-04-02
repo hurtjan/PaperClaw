@@ -1,7 +1,8 @@
 {
   "claudeMdExcludes": [
     "../CLAUDE.md",
-    "../.claude/**"
+    "../.claude/**",
+    "**/PaperClaw/CLAUDE.md"
   ],
   "permissions": {
     "allow": [
