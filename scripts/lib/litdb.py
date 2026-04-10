@@ -3,6 +3,7 @@
 
 import gzip
 import json
+import os
 import re
 import subprocess
 from datetime import date
@@ -42,6 +43,8 @@ def is_owned(paper: dict) -> bool:
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIG_FILE = ROOT / "project.yaml"
+TEXT_DIR = ROOT / "data" / "text"
+TEXT_STAGES = ("staging", "in_process", "done")
 
 _config_cache = None
 
@@ -53,6 +56,15 @@ def load_config() -> dict:
         with open(CONFIG_FILE) as f:
             _config_cache = yaml.safe_load(f)
     return _config_cache
+
+
+def get_s2_api_key() -> str | None:
+    """Return S2 API key from env var (priority) or project.yaml."""
+    key = os.environ.get("S2_API_KEY")
+    if key:
+        return key
+    cfg = load_config()
+    return (cfg.get("apis") or {}).get("semantic_scholar", {}).get("key")
 
 
 def get_agent_version(agent_name: str) -> str:
@@ -470,3 +482,86 @@ def generate_paper_id(title: str, authors: list, year, existing_ids: set) -> str
         if candidate not in existing_ids:
             return candidate
     return f"{base}_x"
+
+
+# ---------------------------------------------------------------------------
+# Text-file staging utilities
+# ---------------------------------------------------------------------------
+
+def ensure_text_dirs() -> None:
+    """Create text staging subdirectories if they don't exist."""
+    for stage in TEXT_STAGES:
+        (TEXT_DIR / stage).mkdir(parents=True, exist_ok=True)
+
+
+def resolve_text_file(stem_or_path: str) -> Path | None:
+    """Find a text file across staging subdirectories.
+
+    Accepts a stem ('foo'), filename ('foo.txt'), or stored path ('data/text/foo.txt').
+    Searches in_process first (most likely during extraction), then staging, done, then legacy root.
+    """
+    # Extract stem from various input formats
+    stem = Path(stem_or_path).stem
+    if stem_or_path.endswith('.txt'):
+        stem = Path(stem_or_path).stem
+
+    for stage in ("in_process", "staging", "done"):
+        candidate = TEXT_DIR / stage / f"{stem}.txt"
+        if candidate.exists():
+            return candidate
+    # Legacy fallback: flat text dir
+    candidate = TEXT_DIR / f"{stem}.txt"
+    if candidate.exists():
+        return candidate
+    return None
+
+
+def get_text_stage(stem: str) -> str | None:
+    """Return the current stage name for a text file.
+
+    Returns 'staging', 'in_process', 'done', 'legacy' (flat root), or None.
+    """
+    stem = Path(stem).stem  # handle both stem and filename
+    for stage in TEXT_STAGES:
+        if (TEXT_DIR / stage / f"{stem}.txt").exists():
+            return stage
+    if (TEXT_DIR / f"{stem}.txt").exists():
+        return "legacy"
+    return None
+
+
+def move_to_stage(stem: str, target_stage: str) -> Path:
+    """Move a text file (and its .part*.txt siblings) to a target stage.
+
+    Idempotent: no-op if already in target stage.
+    Returns the new path of the main txt file.
+    Raises FileNotFoundError if the text file is not found in any stage.
+    """
+    import shutil
+
+    stem = Path(stem).stem  # handle both stem and filename
+    if target_stage not in TEXT_STAGES:
+        raise ValueError(f"Invalid stage: {target_stage}. Must be one of {TEXT_STAGES}")
+
+    source = resolve_text_file(stem)
+    if source is None:
+        raise FileNotFoundError(f"Text file not found for stem: {stem}")
+
+    target_dir = TEXT_DIR / target_stage
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{stem}.txt"
+
+    # Idempotent: no-op if already there
+    if source == target:
+        return target
+
+    # Move main file
+    shutil.move(str(source), str(target))
+
+    # Move part files from the same source directory
+    source_dir = source.parent
+    for part_file in sorted(source_dir.glob(f"{stem}.part*.txt")):
+        part_target = target_dir / part_file.name
+        shutil.move(str(part_file), str(part_target))
+
+    return target

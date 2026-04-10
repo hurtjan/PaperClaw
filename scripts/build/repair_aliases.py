@@ -10,9 +10,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+sys.path.insert(0, str(ROOT / "scripts" / "build"))
 
-from litdb import fast_loads, export_json
+from litdb import fast_loads, export_json, derive_detail_level
 from db import _build_alias_remap, resolve_aliases_in_edges, repair_bidi_sql
+from merge_extractions import _merge_extraction_meta
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 
@@ -61,6 +63,20 @@ def _reenrich_canonicals(papers, dry_run=False):
                 changed = True
                 type_upgrades += 1
                 break
+        # Extraction_meta enrichment
+        canon_em = p.get("extraction_meta") or {}
+        em_changed = False
+        for alias_id in aliases:
+            alias = papers.get(alias_id, {})
+            alias_em = alias.get("extraction_meta")
+            if alias_em:
+                canon_em = _merge_extraction_meta(canon_em, alias_em, alias_id)
+                em_changed = True
+        if em_changed and canon_em.get("passes_completed"):
+            canon_em["detail_level"] = derive_detail_level(canon_em["passes_completed"])
+            if not dry_run:
+                p["extraction_meta"] = canon_em
+            changed = True
         if changed:
             enriched_count += 1
     return enriched_count, type_upgrades

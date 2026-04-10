@@ -21,7 +21,7 @@ Options:
   --output-dir    Override output directory (default: pdf-staging/)
 
 Environment:
-  S2_API_KEY  — optional Semantic Scholar API key (higher rate limits)
+  S2_API_KEY  — Semantic Scholar API key; also read from project.yaml (apis.semantic_scholar.key)
 """
 
 import argparse
@@ -39,7 +39,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from litdb import normalize_doi, export_json
+from litdb import normalize_doi, export_json, get_s2_api_key
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 FETCH_LOG_FILE = ROOT / "data" / "db" / "preprint_fetch_log.json"
@@ -567,9 +567,11 @@ def main():
                         help="Cap total downloads per run (default: 50)")
     parser.add_argument("--output-dir", type=Path, default=None, metavar="DIR",
                         help="Override output directory (default: pdf-staging/)")
+    parser.add_argument("--api-key", default=None,
+                        help="S2 API key (overrides project.yaml and env var)")
     args = parser.parse_args()
 
-    api_key = os.environ.get("S2_API_KEY")
+    api_key = args.api_key or get_s2_api_key()
     print(f"S2_API_KEY: {'found' if api_key else 'not set (1 req/sec)'}")
     if args.dry_run:
         print("DRY RUN — no files will be written")

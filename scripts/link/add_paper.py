@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Naive add: add a paper extraction to papers.json without fuzzy matching.
+Naive add: add paper extraction(s) to papers.json without fuzzy matching.
 
 Creates the owned paper entry (or upgrades an existing stub/external_owned),
 creates stubs for each citation that doesn't already exist, wires bidirectional
 cites/cited_by edges, and rebuilds the index.
 
-Usage: python3 scripts/py.py scripts/link/add_paper.py data/extractions/{id}.json
+Supports batch mode: pass multiple extraction paths to load the DB once,
+add all papers, save once, and rebuild once.
+
+Usage: python3 scripts/py.py scripts/link/add_paper.py data/extractions/{id}.json [...]
 """
 
 import json
@@ -23,25 +26,9 @@ from litdb import normalize_doi, export_json, is_owned, fast_loads
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: python3 scripts/py.py scripts/link/add_paper.py data/extractions/{id}.json")
-        sys.exit(1)
-
-    extraction_path = Path(sys.argv[1])
-    if not extraction_path.is_absolute():
-        extraction_path = ROOT / extraction_path
-
-    ext = fast_loads(extraction_path.read_text())
-
+def add_one(ext, papers):
+    """Add a single extraction to the in-memory papers dict. Returns (from_id, new_stubs, linked)."""
     from_id = ext["id"]
-
-    if not PAPERS_FILE.exists():
-        PAPERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        PAPERS_FILE.write_text('{"metadata": {}, "papers": {}}')
-    db = fast_loads(PAPERS_FILE.read_text())
-
-    papers = db["papers"]
     print(f"Adding paper: {from_id}")
 
     source_file = Path(ext.get("source_file", "")).name
@@ -94,7 +81,7 @@ def main():
         papers[cit_id] = {
             "id": cit_id, "type": "stub",
             "title": cit.get("title", ""),
-            "authors": cit.get("authors", []),
+            "authors": cit.get("authors") or [],
             "year": cit.get("year"),
             "journal": cit.get("journal", ""),
             "doi": normalize_doi(cit.get("doi")),
@@ -126,6 +113,41 @@ def main():
             if p["type"] == "stub" and not p["cited_by"]:
                 del papers[pid]
 
+    return from_id, new_entries, linked
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python3 scripts/py.py scripts/link/add_paper.py data/extractions/{id}.json [...]")
+        sys.exit(1)
+
+    extraction_paths = []
+    for arg in sys.argv[1:]:
+        p = Path(arg)
+        if not p.is_absolute():
+            p = ROOT / p
+        extraction_paths.append(p)
+
+    batch = len(extraction_paths) > 1
+    if batch:
+        print(f"Batch mode: adding {len(extraction_paths)} papers")
+
+    if not PAPERS_FILE.exists():
+        PAPERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PAPERS_FILE.write_text('{"metadata": {}, "papers": {}}')
+    db = fast_loads(PAPERS_FILE.read_text())
+    papers = db["papers"]
+
+    total_stubs = 0
+    total_linked = 0
+    added_ids = []
+    for extraction_path in extraction_paths:
+        ext = fast_loads(extraction_path.read_text())
+        from_id, new_stubs, linked = add_one(ext, papers)
+        added_ids.append(from_id)
+        total_stubs += new_stubs
+        total_linked += linked
+
     # Update metadata
     owned_count = sum(1 for p in papers.values() if is_owned(p))
     stub_count = sum(1 for p in papers.values() if p.get("type") == "stub")
@@ -133,11 +155,14 @@ def main():
     db["metadata"]["owned_count"] = owned_count
     db["metadata"]["stub_count"] = stub_count
 
-    export_json(db, PAPERS_FILE,
-                description=f"add_paper {from_id}: {new_entries} new stubs, {linked} citations")
+    if batch:
+        desc = f"add_paper batch ({len(added_ids)}): {total_stubs} new stubs, {total_linked} citations"
+    else:
+        desc = f"add_paper {added_ids[0]}: {total_stubs} new stubs, {total_linked} citations"
+    export_json(db, PAPERS_FILE, description=desc)
     print(f"\nUpdated papers.json: {owned_count} owned + {stub_count} stub")
 
-    # Rebuild index
+    # Rebuild index (once)
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "build" / "build_index.py")],
         cwd=ROOT, capture_output=True, text=True
@@ -147,13 +172,13 @@ def main():
     else:
         print(f"ERROR: index rebuild failed: {result.stderr.strip()}", file=sys.stderr)
 
-    # Consistency check
+    # Consistency check (once)
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "build" / "check_db.py")],
         cwd=ROOT, capture_output=True, text=True
     )
     print(result.stdout.strip())
-    print(f"\nDONE - paper added successfully.")
+    print(f"\nDONE - {'batch' if batch else 'paper'} added successfully.")
 
 
 if __name__ == "__main__":

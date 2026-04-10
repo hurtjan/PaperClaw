@@ -16,6 +16,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+from litdb import resolve_text_file
+
 EXT_DIR = ROOT / "data" / "extractions"
 TEXT_DIR = ROOT / "data" / "text"
 PDF_DIR = ROOT / "data" / "pdfs"
@@ -34,16 +38,24 @@ def rename_paper(paper_id: str) -> bool:
     source_stem = Path(source_file).stem if source_file else ""
     changed = False
 
-    # Rename text file
+    # Rename text file (within same stage directory)
     if source_stem and source_stem != paper_id:
-        old_text = TEXT_DIR / f"{source_stem}.txt"
-        new_text = TEXT_DIR / f"{paper_id}.txt"
-        if old_text.exists() and not new_text.exists():
-            old_text.rename(new_text)
-            data["source_file"] = f"{paper_id}.txt"
-            print(f"  text: {old_text.name} -> {new_text.name}", flush=True)
-            changed = True
-        elif new_text.exists():
+        old_text = resolve_text_file(source_stem)
+        if old_text is not None:
+            new_text = old_text.parent / f"{paper_id}.txt"
+            if not new_text.exists():
+                old_text.rename(new_text)
+                # Also rename part files in the same directory
+                for part_file in sorted(old_text.parent.glob(f"{source_stem}.part*.txt")):
+                    part_target = old_text.parent / part_file.name.replace(source_stem, paper_id, 1)
+                    part_file.rename(part_target)
+                data["source_file"] = f"{paper_id}.txt"
+                print(f"  text: {old_text.name} -> {new_text.name}", flush=True)
+                changed = True
+            else:
+                data["source_file"] = f"{paper_id}.txt"
+                changed = True
+        elif resolve_text_file(paper_id) is not None:
             data["source_file"] = f"{paper_id}.txt"
             changed = True
 

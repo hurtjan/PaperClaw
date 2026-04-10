@@ -77,6 +77,15 @@ The `query/` subdirectory is a standalone Claude Code project for querying the l
 
 **If the user asks a paper or literature question in the main context, tell them to open the query environment instead:** _"For querying, open a Claude Code session in the `query/` subdirectory: `cd query && claude`."_
 
+### Mirrored query files
+
+The query environment is a mirror of the main-context query setup. These file pairs must always be kept in sync — if you edit one, update the other:
+
+| Main context | Query environment |
+|---|---|
+| `.claude/commands/local-query.md` | `query/CLAUDE.md` |
+| `.claude/agents/local-query-executor.md` | `query/.claude/agents/query-executor.md` |
+
 ## Files & Customization
 
 Core files are read-only during normal usage — only edit when the user explicitly enables **developer mode**:

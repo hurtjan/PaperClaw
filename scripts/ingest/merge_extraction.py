@@ -9,7 +9,7 @@ Writes: data/extractions/{id}.json (merged, overwrites Pass 1)
 Also derives normalized fields: title_normalized, author_lastnames.
 Deletes intermediate files after successful merge.
 
-Usage: python3 scripts/py.py scripts/ingest/merge_extraction.py <paper_id>
+Usage: python3 scripts/py.py scripts/ingest/merge_extraction.py <paper_id> [paper_id ...]
 """
 
 import json
@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from litdb import (build_extraction_meta, derive_detail_level, get_agent_version, load_config,
+                   move_to_stage,
                    DIACRITIC_MAP, COMPOUND_PREFIXES, ORG_EXPANSIONS, TITLE_STOP_WORDS,
                    transliterate, normalize_title, normalize_author_lastname, derive_author_lastnames)
 
@@ -171,7 +172,7 @@ def merge(paper_id: str):
     has_contexts = bool(contexts_by_id)
     for citation in extraction.get('citations', []):
         cid = citation.get('id')
-        citation['author_lastnames'] = derive_author_lastnames(citation.get('authors', []))
+        citation['author_lastnames'] = derive_author_lastnames(citation.get('authors') or [])
         citation['title_normalized'] = normalize_title(citation.get('title', ''))
         citation['contexts'] = contexts_by_id.get(cid, [])
         citation_count += 1
@@ -249,13 +250,23 @@ def merge(paper_id: str):
     if meta_path:
         os.remove(meta_path)
 
+    # Move text file to done stage
+    source_file = extraction.get("source_file", "") or extraction.get("text_file", "")
+    if source_file:
+        stem = Path(source_file).stem
+        try:
+            move_to_stage(stem, "done")
+        except FileNotFoundError:
+            print(f"  WARNING: text file not found for {paper_id}, skipping move to done/", file=sys.stderr)
+
     analysis_status = 'yes' if analysis_data else 'no'
     sections_status = f'{len(sections_data)} sections' if sections_data is not None else 'no'
     print(f'MERGED paper_id={paper_id} citations={citation_count} contexts={context_count} analysis={analysis_status} sections={sections_status}')
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print(f'Usage: python3 scripts/py.py scripts/ingest/merge_extraction.py <paper_id>', file=sys.stderr)
+    if len(sys.argv) < 2:
+        print(f'Usage: python3 scripts/py.py scripts/ingest/merge_extraction.py <paper_id> [paper_id ...]', file=sys.stderr)
         sys.exit(1)
-    merge(sys.argv[1])
+    for pid in sys.argv[1:]:
+        merge(pid)

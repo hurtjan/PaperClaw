@@ -99,7 +99,7 @@ For each candidate you marked **skip** in Step 3 where the papers have different
 
 1. For each paper in the candidate set, try to find content to compare — in this order:
    - Read `data/extractions/<paper_id>.json` — check the `abstract` field (skip if file doesn't exist)
-   - Otherwise read the first 60 lines of `data/text/<paper_id>.txt` (skip if file doesn't exist)
+   - Otherwise check for a text file in `data/text/done/`, `data/text/in_process/`, or `data/text/staging/` (in that order) and read the first 60 lines of `<paper_id>.txt` from the first location found (skip if not found in any)
 
 2. If you find readable content for at least one paper:
    - Do the papers clearly describe the **same research** — same dataset, same methods, same core contribution, just under a different title?

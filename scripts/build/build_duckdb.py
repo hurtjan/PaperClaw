@@ -175,8 +175,11 @@ def build_db(con, force=False, fts=False):
     else:
         rebuilt["papers"] = True
         papers_data = _fast_loads(PAPERS_FILE.read_text())["papers"]
+        superseded_ids = {pid for pid, p in papers_data.items() if p.get("superseded_by")}
         paper_rows = []
         for pid, p in papers_data.items():
+            if pid in superseded_ids:
+                continue
             raw_year = p.get("year")
             if isinstance(raw_year, str):
                 m = re.search(r'\d{4}', raw_year)
@@ -210,16 +213,26 @@ def build_db(con, force=False, fts=False):
                 "text_file": p.get("text_file", ""),
                 "detail_level": detail,
                 "passes_completed": passes,
+                "s2_id": p.get("s2_paper_id") or None,
+                "arxiv_id": p.get("arxiv_id") or None,
+                "pubmed_id": p.get("pubmed_id") or None,
+                "pmc_id": p.get("pmc_id") or None,
+                "preprint_server": p.get("preprint_server") or None,
+                "open_access_url": p.get("open_access_url") or None,
             })
 
         _bulk_load(con, "papers", paper_rows,
             "paper_id VARCHAR, type VARCHAR, title VARCHAR, authors VARCHAR, "
             "year INTEGER, journal VARCHAR, doi VARCHAR, abstract VARCHAR, "
             "pdf_file VARCHAR, text_file VARCHAR, "
-            "detail_level VARCHAR, passes_completed VARCHAR")
+            "detail_level VARCHAR, passes_completed VARCHAR, "
+            "s2_id VARCHAR, arxiv_id VARCHAR, pubmed_id VARCHAR, pmc_id VARCHAR, "
+            "preprint_server VARCHAR, open_access_url VARCHAR")
 
         edge_rows = []
         for pid, p in papers_data.items():
+            if pid in superseded_ids:
+                continue
             for cited_id in p.get("cites", []):
                 edge_rows.append({"citing_id": pid, "cited_id": cited_id, "cited_title": ""})
         _bulk_load(con, "citation_edges", edge_rows,

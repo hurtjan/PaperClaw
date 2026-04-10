@@ -56,5 +56,6 @@ Each citation contains only: `id`, `citation_key`, `authors`, `year`, `title`, `
 - Process EVERY reference in the bibliography
 - IDs: lowercase, underscores, no special characters
 - **Citation `id` must ALWAYS be `{author}_{year}_{word}` format — never a number.** If the source paper uses a numbered bibliography (`[1]`, `[2]`, …), put the number in `citation_key` and generate a proper ID from the reference's author/year/title. Example: reference `[6]` by Klimek (2009) titled "Schumpeterian Economic Dynamics…" → `id: "klimek_2009_schumpeterian"`, `citation_key: "6"`.
+- `source_file`: set to the text file name only (e.g., `paper_name.txt`) — do not include directory components like `staging/` or `in_process/`.
 - `pdf_file`: derive from source_file by changing extension and prepending `data/pdfs/`
 - After writing, print: `DONE paper_id={id} citations={N} file=data/extractions/{id}.json`

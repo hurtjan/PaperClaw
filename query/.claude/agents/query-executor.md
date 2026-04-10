@@ -41,56 +41,18 @@ The caller provides the command template for Step 2 — you only fill in the pap
 - **One line per result entry.**
 - **Include a count header:** `N results` (or appropriate label) at the top.
 - **Cap at 20 detailed entries.** If there are more, list the first 20 and append: `(N more results omitted — caller can re-run with higher --limit)`
-- **On error:** report the full error text verbatim so the caller can diagnose.
+- **On error:** If the output contains `QUERY_FAILED:` or the command exits non-zero, report the line verbatim, print `DONE`, and stop. Do not retry, probe with `--help`, or write alternative scripts.
 
-## Format by Command Type
+## Output format
 
-**search / search-all / search-claims / search-sections / search-topics / search-keywords / search-methods:**
 ```
 N results
 
-(Author, Year) [paper_id] — title snippet | field: matched_value_snippet
+[paper_id] (Author, Year) — key fact (title, score, purpose tag, overlap count — whatever is most relevant)
 ...
 ```
 
-**cites / cited-by / explore / purpose:**
-```
-N citation contexts
-
-[cited_id] (Author, Year) — purpose: TAG | "quote snippet (first 60 chars)..."
-...
-```
-
-**chain:**
-```
-Depth 1: N papers
-  (Author, Year) [paper_id] — title snippet
-Depth 2: M papers
-  (Author, Year) [paper_id] — title snippet
-...
-```
-
-**pagerank / katz:**
-```
-N papers ranked
-
-#1 (score: X.XXX) (Author, Year) [paper_id] — title snippet [owned|cited]
-...
-```
-
-**co-cited / bib-coupling / shared-refs / common-citers:**
-```
-N papers
-
-[Nx overlap] (Author, Year) [paper_id] — title snippet
-...
-```
-
-**paper / owned / author / author-info / search-authors / coauthors / top-authors:**
-One meaningful line per entry with the most relevant fields (title, authors, year, paper count, etc.).
-
-**claims / keywords / sections:**
-Preserve key entries, truncating long text. Include paper ID in header if single-paper lookup.
+For `chain`: group entries by depth. For `explore`: group by purpose tag. Cap at 20 entries.
 
 ## Output
 

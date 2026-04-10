@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from litdb import export_json
+from litdb import export_json, resolve_text_file
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 STORAGE_DIR = ROOT / "data" / "pdfs"
@@ -82,10 +82,10 @@ def main():
         print(f"  Stage the PDF and run ingest.py first.", file=sys.stderr)
         sys.exit(1)
 
-    # Find text file (same stem as PDF)
-    text_path = TEXT_DIR / f"{pdf_path.stem}.txt"
-    if not text_path.exists():
-        print(f"\nERROR: text file not found: {text_path}", file=sys.stderr)
+    # Find text file (same stem as PDF) across staging dirs
+    text_path = resolve_text_file(pdf_path.stem)
+    if text_path is None:
+        print(f"\nERROR: text file not found for stem: {pdf_path.stem}", file=sys.stderr)
         print(f"  Run ingest.py to extract text from the PDF first.", file=sys.stderr)
         sys.exit(1)
 

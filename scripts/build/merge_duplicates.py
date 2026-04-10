@@ -25,8 +25,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from litdb import export_json, is_owned, fast_loads
-from merge_extractions import merge_extraction_files
+from litdb import export_json, is_owned, fast_loads, derive_detail_level
+from merge_extractions import merge_extraction_files, _merge_extraction_meta
 
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 DEFAULT_PLAN_FILE = ROOT / "data" / "tmp" / "duplicate_merge_plan.json"
@@ -107,6 +107,21 @@ def do_merge(papers: dict, canonical_id: str, alias_ids: list,
         if not dry_run:
             canonical["type"] = best_type
         summary["enriched_fields"].append(f"type → {best_type}")
+
+    # Step 1c: Merge extraction_meta from aliases
+    canon_em = canonical.get("extraction_meta") or {}
+    em_changed = False
+    for alias_id in alias_ids:
+        alias = papers.get(alias_id, {})
+        alias_em = alias.get("extraction_meta")
+        if alias_em:
+            canon_em = _merge_extraction_meta(canon_em, alias_em, alias_id)
+            em_changed = True
+    if em_changed and canon_em.get("passes_completed"):
+        canon_em["detail_level"] = derive_detail_level(canon_em["passes_completed"])
+        if not dry_run:
+            canonical["extraction_meta"] = canon_em
+        summary["enriched_fields"].append("extraction_meta")
 
     # Step 2: Merge graph edges from all aliases (including transitive) into canonical
     # Track current state to avoid double-counting (matters in dry_run too)

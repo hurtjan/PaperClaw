@@ -84,6 +84,32 @@ p.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
 
 **If already installed**, skip this step.
 
+
+## Step 3b — Semantic Scholar API key
+
+Check if `project.yaml` already has `apis.semantic_scholar.key` set.
+
+**If not set**, ask:
+
+> **Semantic Scholar API key:** PaperClaw uses the Semantic Scholar API for forward citation discovery, DOI resolution, and finding open-access preprint links. It works without a key (1 request/sec) but an API key gives 10 req/sec — much faster for large corpora.
+>
+> Get a free key at: https://www.semanticscholar.org/product/api#api-key-form
+>
+> Paste your key here, or press Enter to skip (you can add it later in `project.yaml`):
+
+If the user provides a key, save it:
+
+```python
+import yaml, pathlib
+p = pathlib.Path("project.yaml")
+data = yaml.safe_load(p.read_text()) if p.exists() else {}
+data.setdefault("apis", {}).setdefault("semantic_scholar", {})["key"] = "KEY"
+p.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
+```
+
+Run this with `python3 scripts/py.py -c "..."` (inline the snippet).
+
+**If already set**, confirm: "S2 API key configured ✓"
 ## Step 4 — Extraction defaults
 
 Check whether `ingest_defaults.md` exists in the memory directory.
@@ -132,7 +158,7 @@ Present the available skills grouped by workflow phase. Use a clean table or gro
 - **`query/` subdirectory** — Open Claude Code in the `query/` folder (`cd query && claude`) to ask natural-language questions about your literature. This is a sandboxed, read-only environment with a dedicated Haiku agent that keeps token costs low. The database syncs automatically after `/ingest`, `/clean-db`, and `/merge`.
 
 **Expanding your corpus**
-- `/pull-citing` — Fetch papers that cite your owned papers from Semantic Scholar (forward citations).
+- `/fetch-s2` — Semantic Scholar integration: forward citations, DOI resolution, external IDs, open-access URLs.
 - `/fetch-preprints` — Download open-access PDFs from arXiv, bioRxiv, and medRxiv (SSRN only if Semantic Scholar has a cached copy — SSRN itself is login-walled).
 
 **Maintenance**
@@ -146,19 +172,23 @@ Show the core workflow as a numbered list:
 1. Drop PDFs into `pdf-staging/`
 2. Run `/ingest` — extracts text, identifies references, links citations, rebuilds the query index
 3. Open the query environment — `cd query && claude` — and ask questions about your literature
-4. Run `/pull-citing` — discovers papers published *after* yours that cite them (forward citations)
+4. Run `/fetch-s2` — discovers papers published *after* yours that cite them (forward citations)
 5. Repeat: drop newly discovered PDFs into staging, ingest, query
 
 Then explain Semantic Scholar integration:
 
 > **Semantic Scholar integration**
 >
-> Two skills connect to the Semantic Scholar API to expand your corpus beyond what PDF extraction can see:
+> `/fetch-s2` is the central skill for all Semantic Scholar interactions:
 >
-> - **`/pull-citing`** finds papers published *after* your ingested papers that cite them — forward citations that simply don't exist in any PDF's reference list.
-> - **`/fetch-preprints`** downloads open-access PDFs from arXiv, bioRxiv, and medRxiv so you can ingest them directly. SSRN papers are only available if Semantic Scholar has a cached open-access copy (SSRN itself requires login).
+> - **`/fetch-s2 enrich`** — batch-resolves DOIs to S2 IDs, arXiv, PubMed, and open-access URLs
+> - **`/fetch-s2 forward`** — finds papers published *after* yours that cite them (forward citations)
+> - **`/fetch-s2 title-search`** — finds S2 IDs and DOIs for stub entries with no DOI
+> - **`/fetch-s2 all`** — runs the full enrichment pipeline in order
 >
-> Both work without authentication, but setting the `S2_API_KEY` environment variable gives you higher rate limits for large corpora.
+> `/fetch-preprints` downloads open-access PDFs from arXiv, bioRxiv, and medRxiv so you can ingest them.
+>
+> The S2 API key is stored in `project.yaml` and shared across all scripts.
 
 ## Step 7 — Project state
 

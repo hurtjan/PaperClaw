@@ -1,75 +1,9 @@
 ---
-description: Fetch papers that cite your owned papers from Semantic Scholar. Usage: /pull-citing [forward|ids] [paper_id ...]
+description: "Deprecated — use /fetch-s2 instead. Redirects to /fetch-s2 forward."
 ---
 
-You are fetching citing papers and enriching the literature database with Semantic Scholar data.
+This command has been renamed to `/fetch-s2`.
 
-Arguments: $ARGUMENTS
+Run `/fetch-s2 forward` for forward citations, or `/fetch-s2` for the full menu of S2 integration options.
 
-- `forward` (or no args): Fetch forward citations for owned papers.
-- `ids`: Backfill S2 paper IDs on papers missing them.
-- Optional paper IDs to limit scope.
-
-## Query-dir handoff
-
-Before running, check if `query/data/pull_citing.txt` exists (written by the query subproject's `request-pull` command). If it does:
-1. Read the paper IDs from the file (one per line).
-2. Show the user which papers were queued and ask whether to proceed.
-3. Use those IDs as `--paper` arguments to the fetch script.
-4. Delete `query/data/pull_citing.txt` after successful fetching.
-
-## Rules
-
-- Always use `python3 scripts/py.py` for scripts.
-- Recommend setting `S2_API_KEY` env var for title search and higher rate limits.
-
----
-
-## Forward Citations
-
-Fetch citing papers via S2, create stubs, then deduplicate with /clean-db.
-
-### Step 1: Fetch S2 data
-
-```
-python3 scripts/py.py scripts/enrich/fetch_forward_citations.py [--paper ID ...| --all] [--force] [--max-per-paper N]
-```
-
-- Resolves S2 paper IDs (via DOI then title search fallback)
-- Fetches all citing papers from Semantic Scholar
-- Saves raw results to `data/tmp/s2_forward_results.json`
-- Persists resolved S2 IDs on owned papers in `papers.json`
-- Caches results for 30 days (use `--force` to re-fetch)
-
-### Step 2: Create stubs
-
-```
-python3 scripts/py.py scripts/link/apply_forward.py
-```
-
-Creates stubs for all citing papers not already in the DB (exact-match by DOI/S2 ID). New stubs are marked `dedup_pending=True`. Wires `forward_cited_by` edges on owned papers.
-
-### Step 3: Deduplicate and link authors
-
-Run `/clean-db` to find and merge duplicate stubs, then link authors.
-
----
-
-## S2 ID Backfill
-
-Resolve Semantic Scholar paper IDs for owned papers that don't have one yet. Uses DOI lookup (fast path) or title search (fallback). S2 IDs enable forward citation discovery.
-
-The forward citation script resolves S2 IDs automatically as part of its workflow. To backfill IDs without fetching citations, use `--dry-run`:
-
-```
-python3 scripts/py.py scripts/enrich/fetch_forward_citations.py --all --dry-run
-```
-
-This resolves and prints S2 IDs for all owned papers without writing citation data. To persist the resolved IDs, run without `--dry-run`:
-
-```
-python3 scripts/py.py scripts/enrich/fetch_forward_citations.py --all
-```
-
-- To limit to specific papers: `--paper <id1> <id2>`
-- Requires `S2_API_KEY` for title search (DOI lookups work without it)
+Pass any arguments through: `/fetch-s2 forward $ARGUMENTS`

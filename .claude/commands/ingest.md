@@ -33,17 +33,28 @@ Arguments: $ARGUMENTS
    >
    > Would you like to run the missing passes on these entries now?
 
-   If the user says yes, include those papers in Phase 2 extraction using their existing paper ID and text file path (`data/text/<pdf_stem>.txt`), skipping any passes already completed in `extraction_meta.passes_completed`.
+   If the user says yes, include those papers in Phase 2 extraction using their existing paper ID, skipping any passes already completed in `extraction_meta.passes_completed`. Before starting extraction, move the text file from done/ back to in_process/:
+   ```bash
+   python3 scripts/py.py scripts/ingest/stage_text.py {text_stem} in_process
+   ```
+   Then use `data/text/in_process/{text_stem}` as the text file path.
 
 4. If ingest reports **EXTERNAL MATCH** or **STUB MATCH** lines, run `python3 scripts/py.py scripts/ingest/adopt_import.py <paper_id>` for each — this promotes the `external_owned` or `stub` entry to `owned` and wires up the local PDF/text paths. The paper is then ready for normal extraction in Phase 2.
 
-**Paths:** `pdf-staging/` (input), `data/pdfs/` (accepted), `data/text/` (extracted text), `data/tmp/pending_duplicates.json`
+**Paths:** `pdf-staging/` (input), `data/pdfs/` (accepted), `data/text/staging/` (extracted text), `data/tmp/pending_duplicates.json`
 
 If `--dry-run`, stop here.
 
 ---
 
 ## Phase 2 — Extraction
+
+### Text file staging workflow
+
+Text files follow a staging workflow: `staging/` → `in_process/` → `done/`
+- `ingest.py` writes new text to `data/text/staging/`
+- Before extraction: move to `data/text/in_process/` via `stage_text.py`
+- After merge: `merge_extraction.py` moves to `data/text/done/`
 
 ### Pre-flight: Determine passes to run
 
@@ -86,16 +97,27 @@ If neither `--passes`, the memory file, nor a user prompt response is available,
 
 For each accepted text file from Phase 1, run these steps **in order**. Track two variables per paper:
 
-- `{text_file}` = the original text file path from Phase 1 (e.g., `data/text/1-s2.0-S0140988326000721-main.txt`)
+- `{text_stem}` = the text file name without directory (e.g., `1-s2.0-S0140988326000721-main.txt`)
+- `{text_file}` = the resolved text file path after staging (e.g., `data/text/in_process/1-s2.0-S0140988326000721-main.txt`)
 - `{id}` = the paper ID from Pass 1's DONE line (e.g., `pichler_2026_five`) — not yet known before Pass 1 completes
 
 Multiple papers can run this recipe **in parallel**.
+
+**Step 0 — Stage text file for extraction**
+
+Move the text file from staging to in_process before launching any agents:
+
+```bash
+python3 scripts/py.py scripts/ingest/stage_text.py {text_stem} in_process
+```
+
+After this, `{text_file}` = `data/text/in_process/{text_stem}`.
 
 **Step 1 — Pass 1: Metadata + references** (required)
 
 Agent: `paper-extractor` (Haiku), fallback `paper-extractor-large` (Sonnet).
 
-Prompt (substitute the original text file path for `{text_file}`; `{id}` is not yet known):
+Prompt (substitute the in_process text file path for `{text_file}`; `{id}` is not yet known):
 
     Extract metadata and references from: {text_file}
 
@@ -109,6 +131,8 @@ Prompt (substitute the original text file path for `{text_file}`; `{id}` is not 
 python3 scripts/py.py scripts/ingest/gen_refs_sidecar.py {id}
 ```
 
+Supports batch: `gen_refs_sidecar.py id1 id2 id3 ...` — pass all completed Pass 1 IDs at once.
+
 - Reads: `data/extractions/{id}.json`
 - Writes: `data/extractions/{id}.refs.json`
 
@@ -116,14 +140,29 @@ python3 scripts/py.py scripts/ingest/gen_refs_sidecar.py {id}
 
 Agent: `paper-extractor-contexts` (Haiku), fallback `paper-extractor-contexts-large` (Sonnet).
 
-Prompt (substitute the original text file path for `{text_file}` and the paper ID for `{id}`):
+**Auto-chunking for large papers:** Before launching the agent, check the text file size and reference count:
+```bash
+wc -c {text_file}                    # file size in bytes
+python3 scripts/py.py -c "import json; print(len(json.load(open('data/extractions/{id}.refs.json'))['references']))"
+```
+If the text is **>80K chars** or has **>100 references**, split it:
+```bash
+python3 scripts/py.py scripts/ingest/split_paper.py {text_file} --max-chars 50000
+```
+This prints one path per line. If only one path is returned, the file is small enough — use it directly. If multiple chunk paths are returned, launch one `paper-extractor-contexts` agent **per chunk in parallel**. Chunk 2+ agents must be told to merge with existing contexts:
+
+    IMPORTANT: Before writing, read the existing data/extractions/{id}.contexts.json file and MERGE your new contexts with the existing ones.
+
+Wait for chunk 1 to finish before launching chunk 2 (to avoid write conflicts), or run them sequentially if only 2 chunks.
+
+**Standard prompt** (substitute `{text_file}` or chunk path, and `{id}`):
 
     Extract citation contexts from: {text_file}
     Refs file: data/extractions/{id}.refs.json
     Paper ID: {id}
     Write output to: data/extractions/{id}.contexts.json
 
-- Reads: `{text_file}`, `data/extractions/{id}.refs.json`
+- Reads: `{text_file}` (or chunk), `data/extractions/{id}.refs.json`
 - Writes: `data/extractions/{id}.contexts.json` — **not** `{id}.json`
 - If no DONE line → retry with `paper-extractor-contexts-large` using the **same prompt**
 
@@ -161,24 +200,51 @@ Prompt (substitute the original text file path for `{text_file}` and the paper I
 python3 scripts/py.py scripts/ingest/merge_extraction.py {id}
 ```
 
+Supports batch: `merge_extraction.py id1 id2 id3 ...` — pass all IDs at once.
+
 - Reads: `{id}.json`, `{id}.contexts.json`, `{id}.refs.json`, `{id}.analysis.json` (if present), `{id}.sections.json` (if present)
 - Writes: `{id}.json` (merged), deletes sidecar files
+- **Note:** `merge_extraction.py` also moves the text file from `data/text/in_process/` to `data/text/done/`.
 
-For large papers, run `python3 scripts/py.py scripts/ingest/split_paper.py` to split text before extraction.
+### Batch orchestration for large ingests
 
-**Paths:** `data/text/` (input), `data/extractions/` (output), `project.yaml` (pass config)
+When processing many papers (>5), use this efficient workflow instead of per-paper loops:
+
+1. **Pass 1:** Launch all `paper-extractor` agents in parallel (background). Collect paper IDs from DONE lines as they complete.
+2. **Step 2 batch:** Once all Pass 1 agents finish, run refs sidecar for all at once:
+   ```bash
+   python3 scripts/py.py scripts/ingest/gen_refs_sidecar.py {id1} {id2} {id3} ...
+   ```
+3. **Passes 2/3/4:** Launch all context/analysis/section agents in parallel (background). To find text file paths for adopted papers whose Pass 1 generated a different ID, read the `source_file` field:
+   ```bash
+   python3 -c "import json; [print(f'{json.load(open(f\"data/extractions/{id}.json\"))[\"id\"]}|{json.load(open(f\"data/extractions/{id}.json\")).get(\"source_file\",\"\")}') for id in ['id1','id2']]"
+   ```
+4. **Merge batch:** Once all pass agents finish:
+   ```bash
+   python3 scripts/py.py scripts/ingest/merge_extraction.py {id1} {id2} {id3} ...
+   ```
+
+**Paths:** `data/text/staging/` → `data/text/in_process/` → `data/text/done/` (text staging), `data/extractions/` (output), `project.yaml` (pass config)
 
 ---
 
 ## Phase 3 — Naive Add
 
-For each newly extracted paper, run directly (no agent needed):
+Add all extracted papers to the DB in a single batch call:
 
 ```bash
-python3 scripts/py.py scripts/link/add_paper.py data/extractions/{id}.json
+python3 scripts/py.py scripts/link/add_paper.py data/extractions/{id1}.json data/extractions/{id2}.json [...]
 ```
 
-This creates the owned paper entry + citation stubs + edges. No matching, no agent involvement. Run sequentially (one at a time).
+This loads papers.json once, adds all papers, saves once, rebuilds the index once, and runs the consistency check once. Pass all extraction paths on one command line.
+
+For very large batches, build the argument list with shell expansion:
+
+```bash
+python3 scripts/py.py scripts/link/add_paper.py $(echo "{id1} {id2} ..." | xargs -n1 -I{} echo data/extractions/{}.json)
+```
+
+No agent involvement. No matching.
 
 **Paths:** `data/extractions/` (input), `data/db/papers.json` (output)
 

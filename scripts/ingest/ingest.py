@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "build"))
 
-from litdb import normalize_doi
+from litdb import normalize_doi, ensure_text_dirs, resolve_text_file
 from find_matches import score_paper_pair
 
 HAS_DOCLING = False
@@ -43,6 +43,7 @@ except ImportError:
 STAGING_DIR = ROOT / "pdf-staging"
 STORAGE_DIR = ROOT / "data" / "pdfs"
 TEXT_DIR = ROOT / "data" / "text"
+TEXT_STAGING = TEXT_DIR / "staging"
 PAPERS_FILE = ROOT / "data" / "db" / "papers.json"
 
 
@@ -195,6 +196,7 @@ def main():
     STAGING_DIR.mkdir(parents=True, exist_ok=True)
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     TEXT_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_text_dirs()
 
     staged = sorted(STAGING_DIR.glob("*.pdf"))
     if not staged:
@@ -235,8 +237,7 @@ def main():
             continue
 
         # Check if text already exists
-        text_path = TEXT_DIR / f"{pdf_path.stem}.txt"
-        if text_path.exists():
+        if resolve_text_file(pdf_path.stem) is not None:
             storage_path = STORAGE_DIR / pdf_path.name
             if storage_path.exists():
                 log(f"  -> skip (already processed)")
@@ -281,8 +282,9 @@ def main():
                         completed = em.get("passes_completed", []) if em else []
                         log(f"    incomplete extractions (passes: {completed or 'none'})")
                     duplicates.append((pdf_path.name, match, text[:3000]))
-                    if text_path.exists():
-                        text_path.unlink()
+                    existing = resolve_text_file(pdf_path.stem)
+                    if existing is not None:
+                        existing.unlink()
                     continue
 
         if args.dry_run:
@@ -291,8 +293,9 @@ def main():
             continue
 
         # Save text immediately
+        text_path = TEXT_STAGING / f"{pdf_path.stem}.txt"
         if external_match:
-            text_path = TEXT_DIR / f"{external_match['id']}.txt"
+            text_path = TEXT_STAGING / f"{external_match['id']}.txt"
         text_path.write_text(text, encoding="utf-8")
         log(f"  -> saved: {text_path.name}")
 

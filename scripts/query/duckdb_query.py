@@ -126,6 +126,14 @@ import re
 import sys
 from pathlib import Path
 
+
+class _Parser(argparse.ArgumentParser):
+    """ArgumentParser that prints QUERY_FAILED to stdout on bad args."""
+    def error(self, message):
+        print(f"QUERY_FAILED: {message}", flush=True)
+        self.print_usage(sys.stderr)
+        sys.exit(2)
+
 try:
     import duckdb
 except ImportError:
@@ -1661,7 +1669,7 @@ def _add_centrality_args(p):
                    help="Symmetrise graph (bidirectional co-citation centrality)")
     p.add_argument("--seed", nargs="+", metavar="ID",
                    help="Personalization seeds (one or more paper IDs)")
-    p.add_argument("--top", type=int, default=15, metavar="N")
+    p.add_argument("--limit", type=int, default=15, metavar="N")
     filt = p.add_mutually_exclusive_group()
     filt.add_argument("--owned", action="store_true",
                       help="Restrict output to owned papers")
@@ -1680,16 +1688,16 @@ def cmd_pagerank(args, con):
     n = _build_graph_tables(con, reverse=args.reverse, undirected=args.undirected)
     scores, iters = _compute_pagerank_db(
         con, n, damping=args.alpha, max_iter=args.max_iter, tol=args.tol,
-        top_k=args.top, seeds=seeds,
+        top_k=args.limit, seeds=seeds,
     )
     dir_tag = " [undirected]" if args.undirected else (" [reverse]" if args.reverse else "")
     seed_tag = f" · seeds: {', '.join(seeds)}" if seeds else f" · d={args.alpha}"
-    label = f"PageRank{dir_tag}  ({seed_tag.strip(' ·')})  top {args.top}"
+    label = f"PageRank{dir_tag}  ({seed_tag.strip(' ·')})  top {args.limit}"
     if args.owned:
         label += "  — owned only"
     elif args.stubs:
         label += "  — cited-only (gaps)"
-    _print_centrality(scores, con, args.top, args.owned, args.stubs, label, iters)
+    _print_centrality(scores, con, args.limit, args.owned, args.stubs, label, iters)
     con.execute("DROP TABLE IF EXISTS _pr_adj")
     con.execute("DROP TABLE IF EXISTS _pr_out_deg")
 
@@ -1702,16 +1710,16 @@ def cmd_katz(args, con):
     n = _build_graph_tables(con, reverse=args.reverse, undirected=args.undirected)
     scores, iters, alpha_used = _compute_katz_db(
         con, n, alpha=args.alpha, beta=args.beta, max_iter=args.max_iter,
-        tol=args.tol, top_k=args.top, seeds=seeds,
+        tol=args.tol, top_k=args.limit, seeds=seeds,
     )
     dir_tag = " [undirected]" if args.undirected else (" [reverse]" if args.reverse else "")
     seed_tag = f" · seeds: {', '.join(seeds)}" if seeds else f" · α={alpha_used:.4f}"
-    label = f"Katz centrality{dir_tag}  ({seed_tag.strip(' ·')})  top {args.top}"
+    label = f"Katz centrality{dir_tag}  ({seed_tag.strip(' ·')})  top {args.limit}"
     if args.owned:
         label += "  — owned only"
     elif args.stubs:
         label += "  — cited-only (gaps)"
-    _print_centrality(scores, con, args.top, args.owned, args.stubs, label, iters)
+    _print_centrality(scores, con, args.limit, args.owned, args.stubs, label, iters)
     con.execute("DROP TABLE IF EXISTS _pr_adj")
     con.execute("DROP TABLE IF EXISTS _pr_out_deg")
 
@@ -1904,7 +1912,7 @@ def cmd_explore(args, con):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DuckDB-backed literature query engine")
+    parser = _Parser(description="DuckDB-backed literature query engine")
     sub = parser.add_subparsers(dest="command")
 
 
@@ -2124,7 +2132,12 @@ def main():
 
     cmd_fn = commands.get(args.command)
     if cmd_fn:
-        cmd_fn(args, con)
+        try:
+            cmd_fn(args, con)
+        except Exception as e:
+            print(f"QUERY_FAILED: {e}", flush=True)
+            con.close()
+            sys.exit(1)
     else:
         parser.print_help()
 

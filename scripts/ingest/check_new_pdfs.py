@@ -23,10 +23,28 @@ def main():
     parser = argparse.ArgumentParser(description="Check for unprocessed PDFs")
     parser.add_argument("-q", "--quiet", action="store_true")
     parser.add_argument("--all", action="store_true")
+    parser.add_argument("--staging-status", action="store_true",
+                        help="Show text file counts per staging directory")
     args = parser.parse_args()
 
+    if args.staging_status:
+        print("Text file staging status:")
+        for subdir in ("staging", "in_process", "done"):
+            stage_dir = TEXT_DIR / subdir
+            count = len(list(stage_dir.glob("*.txt"))) if stage_dir.is_dir() else 0
+            print(f"  {subdir + ':':14s} {count:>3d} files")
+        legacy = sum(1 for t in TEXT_DIR.glob("*.txt") if t.is_file())
+        print(f"  {'legacy:':14s} {legacy:>3d} files")
+        sys.exit(0)
+
     pdfs = {p.stem: p for p in sorted(PDF_DIR.glob("*.pdf"))}
-    texts = {t.stem for t in TEXT_DIR.glob("*.txt")}
+    texts = set()
+    for subdir in ("staging", "in_process", "done"):
+        stage_dir = TEXT_DIR / subdir
+        if stage_dir.is_dir():
+            texts.update(t.stem for t in stage_dir.glob("*.txt"))
+    # Legacy fallback: flat root
+    texts.update(t.stem for t in TEXT_DIR.glob("*.txt") if t.is_file())
 
     new = {stem: path for stem, path in pdfs.items() if stem not in texts}
     done = {stem: path for stem, path in pdfs.items() if stem in texts}
